@@ -1,0 +1,20 @@
+# Configuração mínima para integração Supabase + GitHub.
+# Ajuste project_id após vincular o projeto no dashboard do Supabase.
+
+project_id = "artefact"
+
+[api]
+enabled = true
+port = 54321
+schemas = ["public", "graphql_public"]
+extra_search_path = ["public", "extensions"]
+max_rows = 1000
+
+[db]
+port = 54322
+shadow_port = 54320
+major_version = 15
+
+[studio]
+enabled = true
+port = 54323
