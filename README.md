@@ -1,32 +1,96 @@
-# Artefact — E-commerce de Instrumentos Musicais
+# Artefact — Agente Conversacional para E-commerce de Instrumentos Musicais
 
-Sistema de banco de dados para uma loja de instrumentos musicais no Mato Grosso do Sul, projetado para permitir consultas inteligentes por IA.
+## Visão Geral do Projeto
 
-## Proposta de Solução
+Sistema completo de **agente conversacional com IA** para atendimento a clientes de uma loja de instrumentos musicais no Mato Grosso do Sul.
 
-### Objetivo
+### O que o Agente faz
 
-Criar uma estrutura de banco de dados que permita a uma **IA realizar consultas SQL de forma inteligente** para responder perguntas sobre o negócio. Para isso, o schema foi desenhado com:
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                           AGENTE CONVERSACIONAL                             │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                             │
+│   CLIENTE pergunta:                                                         │
+│   "Vocês têm violão Yamaha em estoque? Qual o preço?"                      │
+│                                                                             │
+│                              ▼                                              │
+│   ┌─────────────────────────────────────────────────────────────────────┐  │
+│   │                         AGENTE IA                                    │  │
+│   │                                                                      │  │
+│   │   1. Consulta BANCO DE DADOS                                        │  │
+│   │      → SELECT * FROM products WHERE name ILIKE '%yamaha%'           │  │
+│   │      → Verifica stock_quantity, price_brl, status                   │  │
+│   │                                                                      │  │
+│   │   2. Consulta POLÍTICAS DA LOJA                                     │  │
+│   │      → Condições de pagamento                                        │  │
+│   │      → Prazo de entrega por cidade                                   │  │
+│   │      → Política de troca/devolução                                   │  │
+│   │                                                                      │  │
+│   │   3. Verifica HISTÓRICO DO CLIENTE                                  │  │
+│   │      → Já é cadastrado?                                              │  │
+│   │      → Tem pedidos anteriores?                                       │  │
+│   │      → Preferências de pagamento?                                    │  │
+│   └─────────────────────────────────────────────────────────────────────┘  │
+│                              ▼                                              │
+│   AGENTE responde:                                                          │
+│   "Temos 14 unidades do Yamaha F310 por R$ 699,90 e 8 do Yamaha C70         │
+│    por R$ 849,00. Para Campo Grande, entregamos em até 5 dias úteis.        │
+│    Parcelamos em até 12x no cartão!"                                        │
+│                                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
 
-1. **Relacionamentos explícitos via Foreign Keys** — A IA consegue entender como as tabelas se conectam
-2. **Tipos enumerados (ENUMs)** — Valores válidos são auto-documentados no schema
-3. **Comentários em todas as tabelas e colunas** — Contexto semântico para a IA
-4. **Constraints de validação** — Regras de negócio embutidas no banco
-5. **Views pré-definidas** — Consultas complexas já otimizadas para perguntas comuns
+### Capacidades do Agente
 
-### Por que essa abordagem?
-
-Quando uma IA precisa gerar SQL, ela analisa o schema do banco para entender:
-- Quais tabelas existem e o que representam
-- Como as tabelas se relacionam (JOINs necessários)
-- Quais valores são válidos para cada campo
-- Quais índices otimizam as consultas
-
-Um schema bem documentado reduz erros de interpretação e permite respostas mais precisas.
+| Funcionalidade | Fonte de Dados | Exemplo de Pergunta |
+|----------------|----------------|---------------------|
+| Consulta de estoque | `products.stock_quantity` | "Tem guitarra Fender disponível?" |
+| Preços e promoções | `products`, `promotions` | "Qual o preço do ukulele Kala?" |
+| Status de pedido | `orders`, `order_items` | "Onde está meu pedido #15?" |
+| Cadastro de cliente | `customers` | "Meu email está cadastrado?" |
+| Políticas da loja | `knowledge_sources` | "Qual o prazo de devolução?" |
+| Formas de pagamento | Políticas + ENUMs | "Vocês parcelam em quantas vezes?" |
 
 ---
 
-## Diagrama de Relacionamento (ERD)
+## Arquitetura do Sistema
+
+```
+┌──────────────────────────────────────────────────────────────────────────────┐
+│                              FRONTEND                                         │
+│                    (Chat Widget / App / WhatsApp)                             │
+└───────────────────────────────────┬──────────────────────────────────────────┘
+                                    │
+                                    ▼
+┌──────────────────────────────────────────────────────────────────────────────┐
+│                           AGENTE IA (LLM)                                     │
+│                                                                               │
+│   ┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐          │
+│   │  Interpretação  │───▶│    Consulta     │───▶│    Resposta     │          │
+│   │   da pergunta   │    │   às fontes     │    │    gerada       │          │
+│   └─────────────────┘    └─────────────────┘    └─────────────────┘          │
+│                                  │                                            │
+└──────────────────────────────────┼────────────────────────────────────────────┘
+                                   │
+                    ┌──────────────┼──────────────┐
+                    ▼              ▼              ▼
+          ┌─────────────┐  ┌─────────────┐  ┌─────────────┐
+          │   SUPABASE  │  │  POLÍTICAS  │  │  HISTÓRICO  │
+          │   (Banco)   │  │  (RAG/Docs) │  │   (Chats)   │
+          │             │  │             │  │             │
+          │ • products  │  │ • Prazos    │  │ • Sessões   │
+          │ • customers │  │ • Trocas    │  │ • Mensagens │
+          │ • orders    │  │ • Garantia  │  │ • Ratings   │
+          │ • stock     │  │ • Pagamento │  │ • Métricas  │
+          └─────────────┘  └─────────────┘  └─────────────┘
+```
+
+---
+
+## Estrutura do Banco de Dados
+
+### Diagrama de Relacionamento (ERD)
 
 ```
 ┌─────────────────┐
@@ -46,36 +110,249 @@ Um schema bem documentado reduz erros de interpretação e permite respostas mai
 │ email           │  │    │ description     │       │ category_id FK  │  │
 │ city            │  │    │ is_active       │       │ stock_quantity  │  │
 └─────────────────┘  │    └─────────────────┘       │ status          │  │
-                     │                              │ specs (JSONB)   │  │
-                     │ 1:N                          │ created_at      │  │
-                     │                              └─────────────────┘  │
-                     │                                                   │
-┌────────────────────┴──┐       ┌─────────────────┐                      │
-│       orders          │       │   order_items   │                      │
-├───────────────────────┤       ├─────────────────┤                      │
-│ order_id PK           │───────│ order_item_id PK│                      │
-│ customer_id FK        │  1:N  │ order_id FK     │                      │
-│ order_date            │       │ product_id FK   │──────────────────────┘
-│ status                │       │ quantity        │           N:1
-│ total_brl             │       └─────────────────┘
-│ payment_method        │
-│ tracking_code         │
-│ estimated_delivery    │
-│ notes                 │
-└───────────────────────┘
+        │            │                              │ specs (JSONB)   │  │
+        │            │ 1:N                          └─────────────────┘  │
+        │            │                                                   │
+        │ 1:N        │                                                   │
+        │  ┌─────────┴──────────┐       ┌─────────────────┐              │
+        │  │       orders       │       │   order_items   │              │
+        │  ├────────────────────┤       ├─────────────────┤              │
+        │  │ order_id PK        │───────│ order_item_id PK│              │
+        │  │ customer_id FK     │  1:N  │ order_id FK     │              │
+        │  │ order_date         │       │ product_id FK   │──────────────┘
+        │  │ status             │       │ quantity        │       N:1
+        │  │ total_brl          │       └─────────────────┘
+        │  │ payment_method     │
+        │  └────────────────────┘
+        │
+        │ 1:N (opcional)
+        │
+┌───────┴─────────────┐       ┌─────────────────────┐
+│   chat_sessions     │       │   chat_messages     │
+├─────────────────────┤       ├─────────────────────┤
+│ session_id PK (UUID)│───────│ message_id PK (UUID)│
+│ customer_id FK      │  1:N  │ session_id FK       │
+│ started_at          │       │ role (user/assistant│
+│ ended_at            │       │ content             │
+│ status              │       │ created_at          │
+│ channel             │       │ model_used          │
+└─────────────────────┘       │ response_time_ms    │
+                              │ rating              │
+┌─────────────────────┐       │ sources_consulted   │
+│  knowledge_sources  │       └─────────────────────┘
+├─────────────────────┤
+│ source_id PK (UUID) │
+│ name                │
+│ source_type         │
+│ content             │
+│ embedding_status    │
+└─────────────────────┘
 ```
 
 ### Relacionamentos
 
 | Origem | Destino | Cardinalidade | Descrição |
 |--------|---------|---------------|-----------|
-| `products.category_id` | `categories.category_id` | N:1 | Cada produto pertence a uma categoria |
-| `promotions.product_id` | `products.product_id` | N:1 | Cada promoção aplica-se a um produto |
-| `orders.customer_id` | `customers.customer_id` | N:1 | Cada pedido pertence a um cliente |
-| `order_items.order_id` | `orders.order_id` | N:1 | Cada item pertence a um pedido |
-| `order_items.product_id` | `products.product_id` | N:1 | Cada item referencia um produto |
+| `products.category_id` | `categories.category_id` | N:1 | Produto pertence a uma categoria |
+| `promotions.product_id` | `products.product_id` | N:1 | Promoção aplica-se a um produto |
+| `orders.customer_id` | `customers.customer_id` | N:1 | Pedido pertence a um cliente |
+| `order_items.order_id` | `orders.order_id` | N:1 | Item pertence a um pedido |
+| `order_items.product_id` | `products.product_id` | N:1 | Item referencia um produto |
+| `chat_sessions.customer_id` | `customers.customer_id` | N:1 | Sessão pode pertencer a um cliente |
+| `chat_messages.session_id` | `chat_sessions.session_id` | N:1 | Mensagem pertence a uma sessão |
 
-A tabela `order_items` funciona como **tabela associativa** entre `orders` e `products`, permitindo que um pedido contenha múltiplos produtos (relação N:N resolvida).
+---
+
+## Tabelas do Sistema
+
+### Domínio: E-commerce
+
+#### `categories`
+Categorias de instrumentos musicais.
+
+| Coluna | Tipo | Descrição |
+|--------|------|-----------|
+| `category_id` | integer | PK |
+| `name` | text | Nome único |
+| `description` | text | Descrição |
+
+#### `customers`
+Clientes da loja (MS).
+
+| Coluna | Tipo | Descrição |
+|--------|------|-----------|
+| `customer_id` | integer | PK |
+| `name` | text | Nome completo |
+| `phone` | text | (67) XXXXX-XXXX |
+| `email` | text | Único |
+| `city` | text | Cidade no MS |
+
+#### `products`
+Instrumentos musicais.
+
+| Coluna | Tipo | Descrição |
+|--------|------|-----------|
+| `product_id` | integer | PK |
+| `name` | text | Marca + modelo |
+| `price_brl` | numeric | Preço em R$ |
+| `category_id` | integer | FK → categories |
+| `stock_quantity` | integer | Estoque disponível |
+| `status` | enum | `active`, `discontinued`, `coming_soon` |
+| `specs` | jsonb | Especificações técnicas |
+
+#### `promotions`
+Descontos por produto.
+
+| Coluna | Tipo | Descrição |
+|--------|------|-----------|
+| `promotion_id` | integer | PK |
+| `product_id` | integer | FK → products |
+| `discount_percent` | numeric | 1-100% |
+| `is_active` | boolean | Se está ativa |
+
+#### `orders`
+Pedidos.
+
+| Coluna | Tipo | Descrição |
+|--------|------|-----------|
+| `order_id` | integer | PK |
+| `customer_id` | integer | FK → customers |
+| `order_date` | date | Data do pedido |
+| `status` | enum | `pending`, `confirmed`, `shipped`, `delivered`, `cancelled` |
+| `total_brl` | numeric | Valor total |
+| `payment_method` | enum | `pix`, `boleto`, `debit`, `credit_3x/6x/12x` |
+
+#### `order_items`
+Itens dos pedidos.
+
+| Coluna | Tipo | Descrição |
+|--------|------|-----------|
+| `order_item_id` | bigint | PK |
+| `order_id` | integer | FK → orders |
+| `product_id` | integer | FK → products |
+| `quantity` | integer | Quantidade |
+
+---
+
+### Domínio: Controle do Agente
+
+#### `chat_sessions`
+Sessões de conversa com o agente.
+
+| Coluna | Tipo | Descrição |
+|--------|------|-----------|
+| `session_id` | uuid | PK |
+| `customer_id` | integer | FK → customers (nullable) |
+| `started_at` | timestamptz | Início da sessão |
+| `ended_at` | timestamptz | Fim da sessão |
+| `status` | enum | `active`, `ended`, `abandoned` |
+| `channel` | text | `web`, `whatsapp`, etc. |
+| `metadata` | jsonb | user_agent, ip, device |
+
+**Por que `customer_id` é nullable?** O cliente pode iniciar uma conversa antes de se identificar. Quando ele informa email/telefone, vinculamos a sessão.
+
+#### `chat_messages`
+Mensagens individuais (cliente e IA).
+
+| Coluna | Tipo | Descrição |
+|--------|------|-----------|
+| `message_id` | uuid | PK |
+| `session_id` | uuid | FK → chat_sessions |
+| `role` | enum | `user` (cliente), `assistant` (IA), `system` |
+| `content` | text | Texto da mensagem |
+| `created_at` | timestamptz | **Timestamp exato** |
+| `model_used` | text | Modelo de IA (gpt-4, claude-3) |
+| `tokens_input` | integer | Tokens de entrada |
+| `tokens_output` | integer | Tokens de saída |
+| `response_time_ms` | integer | Tempo de resposta em ms |
+| `sources_consulted` | jsonb | Fontes usadas pela IA |
+| `rating` | enum | `positive`, `negative`, `neutral` |
+| `rating_feedback` | text | Feedback do avaliador |
+| `rated_at` | timestamptz | Quando foi avaliado |
+
+**Por que armazenar métricas?**
+- `response_time_ms` → Monitorar performance
+- `tokens_*` → Controle de custo
+- `sources_consulted` → Rastreabilidade
+- `rating` + `rating_feedback` → **Validação de acurácia**
+
+#### `knowledge_sources`
+Fontes de conhecimento do agente.
+
+| Coluna | Tipo | Descrição |
+|--------|------|-----------|
+| `source_id` | uuid | PK |
+| `name` | text | Identificador único |
+| `source_type` | text | `document`, `policy`, `faq` |
+| `content` | text | Conteúdo textual |
+| `file_path` | text | Arquivo original |
+| `embedding_status` | text | Status do embedding |
+
+---
+
+## Views para Acompanhamento
+
+### E-commerce
+
+| View | Descrição |
+|------|-----------|
+| `v_products_with_category` | Produtos + categoria |
+| `v_products_with_active_promotion` | Produtos em promoção com preço final |
+| `v_order_details` | Pedidos completos com itens |
+| `v_sales_summary` | Vendas por produto |
+| `v_customer_orders_summary` | Resumo por cliente |
+| `v_inventory_status` | Alertas de estoque |
+
+### Controle do Agente
+
+| View | Descrição |
+|------|-----------|
+| `v_chat_sessions_summary` | Sessões com métricas (duração, mensagens, tokens) |
+| `v_chat_conversation_history` | Histórico formatado para frontend |
+| `v_customer_chat_history` | Interações por cliente |
+| `v_agent_accuracy_metrics` | **Acurácia diária do agente** |
+| `v_low_rated_responses` | Respostas negativas para revisão |
+
+---
+
+## Validação de Acurácia do Agente
+
+### Como funciona
+
+1. **Avaliação de respostas** — Cada resposta do agente pode receber rating (`positive`, `negative`, `neutral`)
+2. **Feedback textual** — Avaliador pode explicar o que estava errado
+3. **Métricas agregadas** — View `v_agent_accuracy_metrics` calcula:
+   - % de respostas positivas (acurácia)
+   - Tempo médio de resposta
+   - Tokens consumidos
+
+### Exemplo de consulta de acurácia
+
+```sql
+SELECT 
+  date,
+  model_used,
+  total_responses,
+  positive_ratings,
+  negative_ratings,
+  accuracy_percent,
+  avg_response_time_ms
+FROM v_agent_accuracy_metrics
+ORDER BY date DESC;
+```
+
+### Exemplo de respostas para revisão
+
+```sql
+SELECT 
+  user_question,
+  assistant_response,
+  rating_feedback,
+  created_at
+FROM v_low_rated_responses
+ORDER BY created_at DESC
+LIMIT 20;
+```
 
 ---
 
@@ -83,213 +360,38 @@ A tabela `order_items` funciona como **tabela associativa** entre `orders` e `pr
 
 ```
 artefact/
-├── data/                           # CSVs de origem
+├── data/                                    # CSVs de origem
 │   ├── desafio_tecnico_ai_eng - categories.csv
 │   ├── desafio_tecnico_ai_eng - customers.csv
 │   ├── desafio_tecnico_ai_eng - products.csv
 │   ├── desafio_tecnico_ai_eng - promotions.csv
 │   ├── desafio_tecnico_ai_eng - orders.csv
-│   └── desafio_tecnico_ai_eng - order_items.csv
+│   ├── desafio_tecnico_ai_eng - order_items.csv
+│   └── políticas_da_loja.pdf               # Documento para RAG
 ├── supabase/
-│   ├── config.toml                 # Configuração do projeto Supabase
+│   ├── config.toml
 │   └── migrations/
-│       └── 20250901220000_initial_schema.sql  # Schema completo
+│       ├── 20250901220000_initial_schema.sql      # Tabelas de e-commerce
+│       └── 20250901230000_chat_agent_tables.sql   # Tabelas do agente
 └── README.md
 ```
 
 ---
 
-## Tabelas
-
-### `categories`
-Categorias de instrumentos musicais vendidos na loja.
-
-| Coluna | Tipo | Descrição |
-|--------|------|-----------|
-| `category_id` | integer | PK — Identificador único |
-| `name` | text | Nome da categoria (único) |
-| `description` | text | Descrição detalhada |
-
-**Categorias existentes:** Guitarras, Baixos, Baterias e Percussão, Teclados e Pianos, Violões, Instrumentos de Sopro (Madeiras), Instrumentos de Sopro (Metais), Cordas Orquestrais, Ukuleles.
-
----
-
-### `customers`
-Clientes da loja, todos localizados no Mato Grosso do Sul.
-
-| Coluna | Tipo | Descrição |
-|--------|------|-----------|
-| `customer_id` | integer | PK — Identificador único |
-| `name` | text | Nome completo |
-| `phone` | text | Telefone (67) XXXXX-XXXX |
-| `email` | text | E-mail (único) |
-| `city` | text | Cidade no MS |
-
-**Cidades:** Campo Grande, Dourados, Três Lagoas, Corumbá, Ponta Porã.
-
----
-
-### `products`
-Instrumentos musicais à venda.
-
-| Coluna | Tipo | Descrição |
-|--------|------|-----------|
-| `product_id` | integer | PK — Identificador único |
-| `name` | text | Nome comercial (marca + modelo) |
-| `price_brl` | numeric(10,2) | Preço em Reais |
-| `category_id` | integer | FK → `categories` |
-| `description` | text | Descrição detalhada |
-| `stock_quantity` | integer | Quantidade em estoque |
-| `status` | product_status | `active`, `discontinued`, `coming_soon` |
-| `specs` | jsonb | Especificações técnicas |
-| `created_at` | date | Data de cadastro |
-
-**Campo `specs` (JSONB):** Contém atributos variáveis por tipo de instrumento:
-- Violões/Guitarras: `top`, `back_sides`, `neck`, `strings`, `scale`, `electronics`, `color`
-- Baterias: `shells`, `pieces`, `hardware`, `color`
-- Teclados: `keys`, `type`, `polyphony`, `color`
-
----
-
-### `promotions`
-Promoções e descontos aplicáveis a produtos.
-
-| Coluna | Tipo | Descrição |
-|--------|------|-----------|
-| `promotion_id` | integer | PK — Identificador único |
-| `product_id` | integer | FK → `products` |
-| `discount_percent` | numeric(5,2) | Percentual de desconto (1-100) |
-| `description` | text | Nome da promoção |
-| `is_active` | boolean | Se a promoção está ativa |
-
-**Cálculo do preço final:** `price_brl * (1 - discount_percent / 100)`
-
----
-
-### `orders`
-Pedidos realizados pelos clientes.
-
-| Coluna | Tipo | Descrição |
-|--------|------|-----------|
-| `order_id` | integer | PK — Identificador único |
-| `customer_id` | integer | FK → `customers` |
-| `order_date` | date | Data do pedido |
-| `status` | order_status | `pending`, `confirmed`, `shipped`, `delivered`, `cancelled` |
-| `total_brl` | numeric(10,2) | Valor total |
-| `payment_method` | payment_method | Forma de pagamento |
-| `tracking_code` | text | Código de rastreio |
-| `estimated_delivery` | date | Previsão de entrega |
-| `notes` | text | Observações internas |
-
-**Formas de pagamento:** `pix`, `boleto`, `debit`, `credit_3x`, `credit_6x`, `credit_12x`
-
----
-
-### `order_items`
-Itens individuais de cada pedido.
-
-| Coluna | Tipo | Descrição |
-|--------|------|-----------|
-| `order_item_id` | bigint | PK — Auto-incremento |
-| `order_id` | integer | FK → `orders` |
-| `product_id` | integer | FK → `products` |
-| `quantity` | integer | Quantidade comprada |
-
-**Constraint:** Combinação `(order_id, product_id)` é única.
-
----
-
-## Tipos Enumerados (ENUMs)
-
-Valores controlados que ajudam a IA a entender opções válidas:
-
-```sql
-product_status: 'active' | 'discontinued' | 'coming_soon'
-order_status:   'pending' | 'confirmed' | 'shipped' | 'delivered' | 'cancelled'
-payment_method: 'pix' | 'boleto' | 'debit' | 'credit_3x' | 'credit_6x' | 'credit_12x'
-```
-
----
-
-## Views Pré-definidas
-
-Views otimizadas para consultas frequentes, evitando JOINs manuais:
-
-| View | Descrição | Uso típico |
-|------|-----------|------------|
-| `v_products_with_category` | Produtos + categoria | Listar produtos com nome da categoria |
-| `v_products_with_active_promotion` | Produtos em promoção | Mostrar preço original e com desconto |
-| `v_order_details` | Pedidos completos | Detalhes de pedido com cliente e itens |
-| `v_sales_summary` | Vendas por produto | Análise de produtos mais vendidos |
-| `v_customer_orders_summary` | Resumo por cliente | Histórico e total gasto por cliente |
-| `v_inventory_status` | Status do estoque | Alertas de estoque baixo/zerado |
-
----
-
-## Constraints e Regras de Negócio
-
-| Constraint | Tabela | Regra |
-|------------|--------|-------|
-| `price_brl > 0` | products | Preço sempre positivo |
-| `stock_quantity >= 0` | products | Estoque nunca negativo |
-| `discount_percent > 0 AND <= 100` | promotions | Desconto entre 1% e 100% |
-| `quantity > 0` | order_items | Quantidade mínima de 1 |
-| `estimated_delivery >= order_date` | orders | Entrega não pode ser antes do pedido |
-
----
-
-## Comportamento de Foreign Keys
-
-| FK | ON UPDATE | ON DELETE | Justificativa |
-|----|-----------|-----------|---------------|
-| products → categories | CASCADE | RESTRICT | Não permitir excluir categoria com produtos |
-| promotions → products | CASCADE | CASCADE | Remover promoções se produto for excluído |
-| orders → customers | CASCADE | RESTRICT | Não permitir excluir cliente com pedidos |
-| order_items → orders | CASCADE | CASCADE | Remover itens se pedido for excluído |
-| order_items → products | CASCADE | RESTRICT | Não permitir excluir produto já vendido |
-
----
-
 ## Integração Supabase + GitHub
 
-1. Conecte o repositório em **Project Settings → Integrations → GitHub**
-2. Configure:
-   - **Working directory:** `.` (raiz do repositório)
-   - **Production branch:** `main`
-3. As migrations serão aplicadas automaticamente a cada push na `main`
+1. **Project Settings → Integrations → GitHub**
+2. **Working directory:** `.`
+3. **Production branch:** `main`
+4. Migrations aplicadas automaticamente a cada push
 
 ---
 
-## Exemplos de Consultas SQL
+## Próximos Passos
 
-### Produtos mais vendidos
-```sql
-SELECT * FROM v_sales_summary 
-ORDER BY total_units_sold DESC 
-LIMIT 10;
-```
-
-### Clientes que mais gastaram
-```sql
-SELECT * FROM v_customer_orders_summary 
-ORDER BY total_spent DESC 
-LIMIT 10;
-```
-
-### Produtos com estoque baixo
-```sql
-SELECT * FROM v_inventory_status 
-WHERE stock_level IN ('out_of_stock', 'low_stock');
-```
-
-### Produtos em promoção
-```sql
-SELECT * FROM v_products_with_active_promotion;
-```
-
-### Pedidos de um cliente específico
-```sql
-SELECT * FROM v_order_details 
-WHERE customer_id = 3 
-ORDER BY order_date DESC;
-```
+1. [ ] Aplicar migrations no Supabase
+2. [ ] Importar dados dos CSVs para as tabelas
+3. [ ] Configurar embeddings do PDF de políticas
+4. [ ] Implementar endpoint da API do agente
+5. [ ] Criar frontend de chat
+6. [ ] Dashboard de métricas e acompanhamento
