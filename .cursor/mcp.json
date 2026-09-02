@@ -1,0 +1,10 @@
+{
+  "mcpServers": {
+    "todos": {
+      "command": "node",
+      "args": [
+        "scripts/mcp-postgrest.cjs"
+      ]
+    }
+  }
+}

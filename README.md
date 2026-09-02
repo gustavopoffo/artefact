@@ -360,7 +360,7 @@ LIMIT 20;
 
 ```
 artefact/
-├── data/                                    # CSVs de origem
+├── data/                                    # CSVs de origem (já importados ao Supabase)
 │   ├── desafio_tecnico_ai_eng - categories.csv
 │   ├── desafio_tecnico_ai_eng - customers.csv
 │   ├── desafio_tecnico_ai_eng - products.csv
@@ -368,11 +368,17 @@ artefact/
 │   ├── desafio_tecnico_ai_eng - orders.csv
 │   ├── desafio_tecnico_ai_eng - order_items.csv
 │   └── políticas_da_loja.pdf               # Documento para RAG
+├── scripts/
+│   └── mcp-postgrest.cjs                   # Wrapper do MCP (lê .env e inicia o servidor PostgREST)
 ├── supabase/
 │   ├── config.toml
 │   └── migrations/
 │       ├── 20250901220000_initial_schema.sql      # Tabelas de e-commerce
 │       └── 20250901230000_chat_agent_tables.sql   # Tabelas do agente
+├── .cursor/
+│   └── mcp.json                            # Config do MCP Supabase (nível do projeto)
+├── .env                                    # Credenciais locais (não versionado)
+├── .env.example                            # Modelo de credenciais
 └── README.md
 ```
 
@@ -385,13 +391,25 @@ artefact/
 3. **Production branch:** `main`
 4. Migrations aplicadas automaticamente a cada push
 
+## MCP Supabase (Cursor)
+
+O projeto usa um MCP local (`todos`) para consultar e alimentar o banco diretamente pelo Cursor via PostgREST.
+
+1. Copie `.env.example` para `.env` e preencha:
+   - `SUPABASE_REST_URL` → URL do projeto + `/rest/v1`
+   - `SUPABASE_KEY` → `service_role` secret (Project Settings → API)
+2. Recarregue o Cursor (`Ctrl+Shift+P` → Reload Window)
+3. Confirme em **Cursor Settings → MCP** que o servidor `todos` está conectado
+
+O wrapper `scripts/mcp-postgrest.cjs` lê o `.env` e inicia `@supabase/mcp-server-postgrest`, contornando a limitação do Cursor de não interpolar variáveis de ambiente diretamente nos `args` do `mcp.json`.
+
 ---
 
-## Próximos Passos
+## Status
 
-1. [ ] Aplicar migrations no Supabase
-2. [ ] Importar dados dos CSVs para as tabelas
-3. [ ] Configurar embeddings do PDF de políticas
-4. [ ] Implementar endpoint da API do agente
-5. [ ] Criar frontend de chat
-6. [ ] Dashboard de métricas e acompanhamento
+- [x] Migrations aplicadas no Supabase
+- [x] Dados dos CSVs importados (categories, customers, products, promotions, orders, order_items)
+- [ ] Configurar embeddings do PDF de políticas
+- [ ] Implementar endpoint da API do agente
+- [ ] Criar frontend de chat
+- [ ] Dashboard de métricas e acompanhamento
