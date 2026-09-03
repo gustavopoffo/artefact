@@ -356,6 +356,98 @@ LIMIT 20;
 
 ---
 
+## Arquitetura RAG e Versionamento de Prompts
+
+O documento `data/políticas_da_loja.pdf` (8 páginas, 10 seções) contém as regras de negócio da loja. Antes de implementar qualquer código, foram tomadas 7 decisões de arquitetura, documentadas abaixo com a justificativa e o impacto de cada uma.
+
+### Decisão 1 — Divisão entre System Prompt (fixo) e RAG (busca)
+
+**O que foi decidido:** Nem todo o conteúdo do PDF foi tratado como RAG. O documento foi lido seção a seção e classificado em dois grupos:
+
+| Vai para o **System Prompt** | Vai para o **RAG** |
+|---|---|
+| 1.2 Dados da Empresa | 3. Formas de Pagamento |
+| 2. Horário de Funcionamento | 4. Trocas e Devoluções |
+| 7. Atendimento via WhatsApp (tom, fluxo, condutas) | 5. Frete e Entregas |
+| 10. Disposições Finais | 6. Promoções e Descontos |
+| | 8. Garantia |
+| | 9. LGPD |
+
+**Por que:** As seções 1.2, 2, 7 e 10 definem **como o agente deve se comportar** (tom de voz, fluxo de atendimento, o que fazer em cada situação) — isso é usado em **100% das conversas**, independente da pergunta. Já as seções 3, 4, 5, 6, 8 e 9 são **regras de consulta** (parcelamento, prazo de troca, frete por cidade) — usadas apenas quando o cliente pergunta sobre aquele assunto específico.
+
+**Impacto:**
+- Colocar tudo no prompt fixo gastaria ~3.000+ tokens em **toda** requisição, mesmo em perguntas que não precisam dessa informação (ex.: "Vocês têm violão Yamaha?").
+- Com a separação, o prompt fixo tem ~1.200 tokens e o RAG injeta só os 1-3 chunks relevantes (~150-300 tokens) para cada pergunta.
+- Economia estimada de **60-70% em tokens de contexto** nas conversas que não tocam em política de troca/frete/pagamento.
+
+### Decisão 2 — Extração manual do texto, sem OCR
+
+**O que foi decidido:** O texto do PDF foi extraído diretamente (leitura de texto nativo), sem usar Docling ou qualquer pipeline de OCR.
+
+**Por que:** O PDF já é um documento com texto selecionável — não é um scan/imagem. OCR existe para converter *imagem em texto*; aqui o texto já existe. Rodar OCR nesse caso adicionaria uma etapa que só introduz risco de erro de reconhecimento (ex.: confundir números como "R$ 100,00") sem nenhum ganho.
+
+**Impacto:**
+- Zero risco de erro de OCR em valores monetários, prazos e percentuais — que são justamente os dados mais sensíveis do documento (errar "7 dias" para "1 dias" por falha de OCR seria crítico).
+- Chunking foi feito manualmente por decisão de projeto, não como limitação: para 8 páginas com estrutura conhecida, chunking curado bate chunker semântico automático em acurácia.
+- Fica documentado como próximo passo (ver Decisão 7) usar Docling + chunker semântico quando houver documentos escaneados ou em maior volume, onde curadoria manual não escala.
+
+### Decisão 3 — Granularidade dos chunks (14 chunks, 1 por sub-regra)
+
+**O que foi decidido:** Cada chunk representa **uma regra de negócio autossuficiente**, não uma seção inteira do PDF. Por exemplo, a seção 4 (Trocas e Devoluções) foi dividida em 4 chunks: arrependimento, defeito, preferência e itens não elegíveis — em vez de 1 chunk único com a seção toda.
+
+**Por que:** Se a seção inteira fosse 1 chunk, uma pergunta sobre "posso trocar por outra cor?" traria de volta também as regras de defeito de fabricação e itens não elegíveis — informação irrelevante que consome tokens e pode confundir o modelo na hora de formular a resposta. Com chunks pequenos e específicos, a busca por similaridade retorna **exatamente** a regra pedida.
+
+**Impacto:**
+- Precisão de recuperação mais alta: o embedding de "troca de cor" fica semanticamente próximo apenas do chunk 4.2, não dos outros 3.
+- Cada chunk é curto (80-150 tokens), então mesmo trazendo `match_count=3`, o custo de contexto é baixo.
+- Trade-off aceito: mais linhas na tabela `rag_chunks` (14 em vez de 6), mas isso não tem custo real em um banco vetorial.
+
+### Decisão 4 — Categoria e keywords em cada chunk
+
+**O que foi decidido:** Todo chunk tem um campo `category` (`pagamento`, `troca`, `frete`, `promocao`, `garantia`, `lgpd`) e um array `keywords` além do embedding.
+
+**Por que:** Busca por embedding sozinha pode falhar em casos de baixa similaridade semântica mas alta similaridade lexical (ex.: sigla "PAC" ou "SEDEX"). A função `match_chunks` aceita `filter_category` como parâmetro — se o agente já identificou que a pergunta é sobre frete, a busca vetorial roda **só dentro da categoria `frete`**, eliminando falsos positivos de outras categorias antes mesmo do cálculo de similaridade.
+
+**Impacto:**
+- Reduz o espaço de busca quando a categoria é conhecida, aumentando a precisão do top-k.
+- Keywords funcionam como rede de segurança para termos técnicos/siglas que embeddings genéricos às vezes não capturam bem.
+- Base para o próximo passo evolutivo: um classificador leve (ou o próprio LLM) prever a categoria antes da busca vetorial.
+
+### Decisão 5 — Modelo de embedding: OpenAI `text-embedding-3-small` (1536 dims)
+
+**O que foi decidido:** Embeddings gerados com `text-embedding-3-small`, dimensão 1536, armazenados em `pgvector` com índice `ivfflat` (cosine distance).
+
+**Por que:** É o modelo de embedding mais barato da OpenAI com qualidade suficiente para textos curtos e bem delimitados (nosso caso, com chunks de 80-150 tokens). O modelo maior (`text-embedding-3-large`, 3072 dims) tem custo ~6x maior e ganho de acurácia marginal para textos deste tamanho e domínio fechado (política de loja, não conhecimento aberto).
+
+**Impacto:**
+- Custo de geração de embeddings para os 14 chunks é irrelevante (< $0.001).
+- Índice `ivfflat` escala bem até milhares de chunks — folga grande considerando que hoje temos 14.
+- Caso a acurácia medida (ver Decisão 7) não seja suficiente, a migração para `text-embedding-3-large` é direta: basta trocar a dimensão da coluna e regerar os embeddings, sem mudar estrutura.
+
+### Decisão 6 — Versionamento do System Prompt (tabela `agent_prompts`)
+
+**O que foi decidido:** O prompt não fica hardcoded no código do agente. Ele é uma linha na tabela `agent_prompts`, com `name`, `version`, `content`, `is_active` e métricas (`times_used`, `avg_accuracy`). Um trigger garante que só existe 1 prompt `is_active=true` por `name`.
+
+**Por que:** O usuário pediu explicitamente "versionamento impecável" porque o prompt vai ser ajustado iterativamente à medida que respostas reais forem avaliadas (rating na tabela `chat_messages`). Sem versionamento, cada ajuste no prompt sobrescreve o anterior e não há como comparar performance entre versões nem fazer rollback.
+
+**Impacto:**
+- Cada versão do prompt (`1.0.0`, `1.1.0`, ...) fica preservada com histórico.
+- É possível cruzar `chat_messages.rating` com a versão do prompt ativa no momento da resposta, respondendo objetivamente "a versão 1.1.0 teve mais acurácia que a 1.0.0?".
+- Rollback é trivial: reativar uma versão antiga (`is_active=true`) sem perder nenhuma versão.
+
+### Decisão 7 — Log de todas as buscas RAG (tabela `rag_query_log`)
+
+**O que foi decidido:** Toda busca vetorial feita pelo agente é registrada: pergunta original, chunks retornados, similaridade (top e média), tempo de busca, e um campo `was_relevant` para avaliação manual posterior.
+
+**Por que:** O usuário pediu "porcentagem de acertividade perfeita" — isso não se mede uma vez, se mede continuamente. Sem log, não há como saber quais perguntas o RAG está respondendo mal, nem revisar se o `similarity_threshold` (hoje 0.5) está bem calibrado.
+
+**Impacto:**
+- A view `v_rag_performance` já calcula taxa de relevância diária a partir desse log — métrica objetiva de acurácia do RAG (distinta da acurácia do agente como um todo, medida em `chat_messages.rating`).
+- Perguntas com baixa similaridade ficam visíveis para virar novos chunks (gap de cobertura do documento).
+- Base de dados real para decidir se vale investir em Docling + chunker automático (Decisão 2) quando o volume de documentos crescer.
+
+---
+
 ## Estrutura do Projeto
 
 ```
@@ -367,18 +459,24 @@ artefact/
 │   ├── desafio_tecnico_ai_eng - promotions.csv
 │   ├── desafio_tecnico_ai_eng - orders.csv
 │   ├── desafio_tecnico_ai_eng - order_items.csv
-│   └── políticas_da_loja.pdf               # Documento para RAG
+│   └── políticas_da_loja.pdf               # Documento fonte do RAG
+├── prompts/
+│   ├── system_prompt_v1.0.0.md             # Prompt fixo do agente (versão atual)
+│   └── rag_chunks_definition.md            # Definição documentada dos 14 chunks RAG
 ├── scripts/
-│   └── mcp-postgrest.cjs                   # Wrapper do MCP (lê .env e inicia o servidor PostgREST)
+│   ├── mcp-postgrest.cjs                   # Wrapper do MCP (lê .env e inicia o servidor PostgREST)
+│   └── seed_rag.py                         # Gera embeddings e popula agent_prompts + rag_chunks
 ├── supabase/
 │   ├── config.toml
 │   └── migrations/
 │       ├── 20250901220000_initial_schema.sql      # Tabelas de e-commerce
-│       └── 20250901230000_chat_agent_tables.sql   # Tabelas do agente
+│       ├── 20250901230000_chat_agent_tables.sql   # Tabelas do agente
+│       └── 20250902233900_rag_and_prompts.sql     # Tabelas agent_prompts, rag_chunks, rag_query_log
 ├── .cursor/
 │   └── mcp.json                            # Config do MCP Supabase (nível do projeto)
 ├── .env                                    # Credenciais locais (não versionado)
-├── .env.example                            # Modelo de credenciais
+├── .env.example                            # Modelo de credenciais (Supabase + OpenAI)
+├── requirements.txt                        # Dependências Python (httpx)
 └── README.md
 ```
 
@@ -409,7 +507,9 @@ O wrapper `scripts/mcp-postgrest.cjs` lê o `.env` e inicia `@supabase/mcp-serve
 
 - [x] Migrations aplicadas no Supabase
 - [x] Dados dos CSVs importados (categories, customers, products, promotions, orders, order_items)
-- [ ] Configurar embeddings do PDF de políticas
+- [x] Estrutura RAG criada (`agent_prompts`, `rag_chunks`, `rag_query_log`, função `match_chunks`)
+- [x] System prompt v1.0.0 e 14 chunks de política definidos e documentados
+- [ ] Executar `seed_rag.py` para gerar embeddings e popular o Supabase
 - [ ] Implementar endpoint da API do agente
 - [ ] Criar frontend de chat
 - [ ] Dashboard de métricas e acompanhamento
