@@ -33,7 +33,7 @@ class RAG:
 
         Retorna:
             - Lista de chunks encontrados
-            - Métricas da busca (para logging)
+            - Métricas da busca (para logging, inclui query_embedding)
         """
         match_count = match_count or config.rag_match_count
         similarity_threshold = similarity_threshold or config.rag_similarity_threshold
@@ -66,9 +66,10 @@ class RAG:
 
         elapsed_ms = int((time.perf_counter() - start_time) * 1000)
 
-        # Métricas
+        # Métricas (inclui embedding para persistência)
         metrics = {
             "query_text": query,
+            "query_embedding": query_embedding,
             "chunks_returned": [c["chunk_id"] for c in chunks],
             "chunks_count": len(chunks),
             "top_similarity": chunks[0]["similarity"] if chunks else None,

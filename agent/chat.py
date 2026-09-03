@@ -138,7 +138,7 @@ class Agent:
         Retorna contexto formatado e sources_consulted.
         """
         context_parts = []
-        sources = {"tables": [], "chunks": [], "rag_metrics": None}
+        sources = {"tables": [], "chunks": [], "rag_metrics": None, "rag_log_id": None}
 
         # RAG - políticas
         if intent["needs_rag"]:
@@ -151,15 +151,17 @@ class Agent:
                 sources["chunks"] = [c["chunk_id"] for c in chunks]
                 sources["rag_metrics"] = metrics
 
-                # Loga busca RAG
-                db.log_rag_query(
+                # Loga busca RAG (agora com embedding)
+                rag_log = db.log_rag_query(
                     query_text=message,
+                    query_embedding=metrics.get("query_embedding", []),
                     chunks_returned=sources["chunks"],
                     top_similarity=metrics.get("top_similarity"),
                     avg_similarity=metrics.get("avg_similarity"),
                     search_time_ms=metrics.get("search_time_ms", 0),
                     session_id=self.session_id,
                 )
+                sources["rag_log_id"] = rag_log.get("log_id")
 
         # Busca de produtos
         if intent["needs_product_search"] and intent["product_query"]:
@@ -289,6 +291,9 @@ class Agent:
         response_content, llm_metrics = llm.chat(messages)
 
         # 7. Registra resposta do agente
+        # Remove rag_log_id do sources antes de salvar (é controle interno)
+        rag_log_id = sources.pop("rag_log_id", None)
+        
         assistant_msg = db.add_message(
             session_id=self.session_id,
             role="assistant",
@@ -299,6 +304,13 @@ class Agent:
             response_time_ms=llm_metrics["response_time_ms"],
             sources_consulted=sources,
         )
+
+        # 8. Atualiza rag_query_log com message_id (corrige bug)
+        if rag_log_id:
+            db.update_rag_log_message(rag_log_id, assistant_msg["message_id"])
+
+        # 9. Incrementa contador de uso do prompt
+        db.increment_prompt_usage(self.prompt_id)
 
         return AgentResponse(
             content=response_content,

@@ -140,7 +140,10 @@ class Database:
 
     def increment_prompt_usage(self, prompt_id: str) -> None:
         """Incrementa contador de uso do prompt."""
-        self._request("POST", "rpc/increment_prompt_usage", {"p_prompt_id": prompt_id})
+        try:
+            self._request("POST", "rpc/increment_prompt_usage", {"p_prompt_id": prompt_id})
+        except RuntimeError:
+            pass
 
     # -------------------------------------------------------------------------
     # RAG Query Log
@@ -149,16 +152,17 @@ class Database:
     def log_rag_query(
         self,
         query_text: str,
+        query_embedding: list[float],
         chunks_returned: list[str],
         top_similarity: float | None,
         avg_similarity: float | None,
         search_time_ms: int,
         session_id: str | None = None,
-        message_id: str | None = None,
     ) -> dict:
-        """Registra busca RAG para análise."""
+        """Registra busca RAG para análise. Retorna o log com log_id."""
         data = {
             "query_text": query_text,
+            "query_embedding": query_embedding,
             "chunks_returned": chunks_returned,
             "chunks_count": len(chunks_returned),
             "top_similarity": top_similarity,
@@ -167,11 +171,16 @@ class Database:
         }
         if session_id:
             data["session_id"] = session_id
-        if message_id:
-            data["message_id"] = message_id
 
         result = self._request("POST", "rag_query_log", data)
         return result[0] if isinstance(result, list) else result
+
+    def update_rag_log_message(self, log_id: str, message_id: str) -> None:
+        """Atualiza o message_id no log de RAG após criar a mensagem."""
+        self._request("POST", "rpc/update_rag_log_message", {
+            "p_log_id": log_id,
+            "p_message_id": message_id,
+        })
 
     # -------------------------------------------------------------------------
     # Customers

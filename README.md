@@ -49,7 +49,7 @@ Sistema completo de **agente conversacional com IA** para atendimento a clientes
 | Preços e promoções | `products`, `promotions` | "Qual o preço do ukulele Kala?" |
 | Status de pedido | `orders`, `order_items` | "Onde está meu pedido #15?" |
 | Cadastro de cliente | `customers` | "Meu email está cadastrado?" |
-| Políticas da loja | `knowledge_sources` | "Qual o prazo de devolução?" |
+| Políticas da loja | `rag_chunks` (RAG) | "Qual o prazo de devolução?" |
 | Formas de pagamento | Políticas + ENUMs | "Vocês parcelam em quantas vezes?" |
 
 ---
@@ -138,15 +138,8 @@ Sistema completo de **agente conversacional com IA** para atendimento a clientes
 │ channel             │       │ model_used          │
 └─────────────────────┘       │ response_time_ms    │
                               │ rating              │
-┌─────────────────────┐       │ sources_consulted   │
-│  knowledge_sources  │       └─────────────────────┘
-├─────────────────────┤
-│ source_id PK (UUID) │
-│ name                │
-│ source_type         │
-│ content             │
-│ embedding_status    │
-└─────────────────────┘
+                              │ sources_consulted   │
+                              └─────────────────────┘
 ```
 
 ### Relacionamentos
@@ -275,18 +268,6 @@ Mensagens individuais (cliente e IA).
 - `tokens_*` → Controle de custo
 - `sources_consulted` → Rastreabilidade
 - `rating` + `rating_feedback` → **Validação de acurácia**
-
-#### `knowledge_sources`
-Fontes de conhecimento do agente.
-
-| Coluna | Tipo | Descrição |
-|--------|------|-----------|
-| `source_id` | uuid | PK |
-| `name` | text | Identificador único |
-| `source_type` | text | `document`, `policy`, `faq` |
-| `content` | text | Conteúdo textual |
-| `file_path` | text | Arquivo original |
-| `embedding_status` | text | Status do embedding |
 
 ---
 
