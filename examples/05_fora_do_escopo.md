@@ -1,35 +1,23 @@
-# Pergunta fora do escopo da loja
+# Fora do escopo — pergunta não relacionada à loja
 
-*Sessão gerada em: 03/09/2026 01:25*
-
----
-
-**Usuário:** Vocês vendem guitarras elétricas?
-
-**Agente:** Olá! Sim, nós vendemos guitarras elétricas. Temos uma variedade de modelos disponíveis. Você está procurando alguma marca ou modelo específico? Posso te ajudar a encontrar o que precisa!
-
-*modelo: gpt-4o-mini | tokens: 1152↑ 38↓ | tempo: 2192ms*
+*Sessão gerada em: 03/09/2026 19:22 (America/Campo_Grande)*
 
 ---
 
-**Usuário:** Qual o melhor app para aprender a tocar guitarra?
+**Usuário:** Vocês recomendam algum app pra aprender a tocar guitarra?
 
-**Agente:** Existem vários aplicativos excelentes para aprender a tocar guitarra! Alguns dos mais populares incluem:
+**Agente:** Opa, meu forte é instrumento, mas posso te dar umas dicas gerais! Muitos guitarristas curtem apps como Yousician, Fender Play e Justin Guitar para aprender e praticar. Eles oferecem lições interativas e exercícios legais para iniciantes e até níveis mais avançados. 
 
-1. **Yousician** - Oferece aulas interativas e feedback em tempo real enquanto você toca.
-2. **Fender Play** - Criado pela famosa marca de guitarras, oferece lições em vídeo de diferentes estilos.
-3. **Ultimate Guitar** - Tem uma vasta coleção de tablaturas e cifras, além de aulas.
+Se precisar de ajuda para escolher uma guitarra, posso te ajudar com isso também! Algum modelo específico em mente?
 
-Esses apps têm recursos variados, então pode valer a pena experimentar alguns para ver qual se adapta melhor ao seu estilo de aprendizagem. Se precisar de mais informações ou dicas sobre guitarras, é só falar!
-
-*modelo: gpt-4o-mini | tokens: 1208↑ 128↓ | tempo: 2197ms*
+*modelo: gpt-4o | tokens: 2289↑ 82↓ | tempo: 2781ms*
 
 ---
 
-**Usuário:** Vocês dão aulas de música?
+**Usuário:** E aula particular, vocês oferecem?
 
-**Agente:** Não, nós não oferecemos aulas de música. Aqui no Empório da Música, nossa especialidade é a venda de instrumentos musicais. No entanto, posso te ajudar a encontrar algumas opções de escolas ou professores de música na sua região, se você quiser!
+**Agente:** Aqui no Empório da Música, a gente foca na venda de instrumentos, então não oferecemos aulas particulares. Mas posso te ajudar a encontrar a guitarra certa para começar a tocar! Tem algum modelo ou estilo que você prefere?
 
-*modelo: gpt-4o-mini | tokens: 1135↑ 52↓ | tempo: 2098ms*
+*modelo: gpt-4o | tokens: 2187↑ 46↓ | tempo: 1767ms*
 
 ---

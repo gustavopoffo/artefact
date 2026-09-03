@@ -1,21 +1,23 @@
 # Consulta ao catálogo — violões até R$1.000
 
-*Sessão gerada em: 03/09/2026 01:24*
+*Sessão gerada em: 03/09/2026 19:20 (America/Campo_Grande)*
 
 ---
 
-**Usuário:** Oi! Quais violões vocês têm disponíveis até R$1000?
+**Usuário:** Oi! Quais violões vocês têm disponíveis custando até R$1000?
 
-**Agente:** Oi! Temos algumas opções de violões disponíveis até R$1000. Confira:
+**Agente:** Oi! Tudo bem? Sou o assistente do Empório. Só te aviso: estamos fora do horário agora — voltamos amanhã às 09:00. Mas posso te ajudar com informações por aqui.
 
-1. **Yamaha C40 Nylon Natural** - R$ 599,90 (Estoque: 12)
-2. **Tagima Memphis AC-39 Nylon Natural** - R$ 429,90 (Estoque: 15)
-3. **Rozini RC-104 Nylon Estudante** - R$ 459,90 (Estoque: 10)
-4. **Giannini GN-15 Nylon Cedr Natural** - R$ 689,00 (Estoque: 6)
-5. **Yamaha C70 Nylon Natural** - R$ 849,00 (Estoque: 8)
+Temos algumas opções de violões disponíveis por até R$ 1.000. Dá uma olhada:
 
-Se precisar de mais informações sobre algum deles ou quiser fazer um pedido, é só avisar! 🎶
+1. Tagima Memphis AC-39 Nylon Natural — R$ 429,90 (15 unidades em estoque)
+2. Rozini RC-104 Nylon Estudante — R$ 459,90 (10 unidades em estoque)
+3. Yamaha C40 Nylon Natural — R$ 599,90 (12 unidades em estoque)
+4. Giannini GN-15 Nylon Cedr Natural — R$ 689,00 (6 unidades em estoque)
+5. Yamaha C70 Nylon Natural — R$ 849,00 (8 unidades em estoque)
 
-*modelo: gpt-4o-mini | tokens: 1153↑ 167↓ | tempo: 2963ms*
+Qual desses te chamou mais atenção?
+
+*modelo: gpt-4o | tokens: 2290↑ 182↓ | tempo: 5575ms*
 
 ---

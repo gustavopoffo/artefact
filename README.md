@@ -745,9 +745,15 @@ artefact/
 │   ├── system_prompt_v2.1.2.md             # Versão ativa (seed)
 │   ├── system_prompt_v*.md                 # Histórico de versões
 │   └── rag_chunks_definition.md            # Curadoria dos 14 chunks
-├── examples/                                # 5 conversas de demonstração
+├── examples/                                # 5 conversas do entregável do desafio
+│   ├── 01_catalogo_violoes.md
+│   ├── 02_endereco_loja.md
+│   ├── 03_preco_takamine.md
+│   ├── 04_politica_devolucao.md            # cenário não trivial (RAG)
+│   └── 05_fora_do_escopo.md
 ├── scripts/
 │   ├── seed_rag.py                         # Popula prompts + embeddings
+│   ├── generate_examples.py                # Gera examples/*.md com o agente real
 │   ├── validate_agent_round.py             # Smoke de validação RAG+DB
 │   └── mcp-postgrest.cjs                   # MCP Cursor → PostgREST
 ├── supabase/migrations/
@@ -976,15 +982,21 @@ Opcional: use o blueprint [`render.yaml`](render.yaml) (New → Blueprint).
 
 ## Exemplos de Interação
 
-A pasta `examples/` contém 5 conversas reais geradas com o agente em funcionamento, cobrindo os principais cenários:
+A pasta [`examples/`](examples/) contém **5 conversas reais** geradas com o agente (modelo `gpt-4o`), cobrindo os cenários sugeridos no desafio:
 
-| Arquivo | Cenário |
-|---------|---------|
-| `01_catalogo_violoes.md` | Consulta ao catálogo — violões disponíveis até R$1.000 |
-| `02_politica_devolucao.md` | Política de devolução — situação não trivial (compra há 10 dias) |
-| `03_preco_produto_especifico.md` | Consulta de preço de produto específico + verificação de promoção |
-| `04_status_pedido.md` | Identificação do cliente por email + pedido sem cadastro |
-| `05_fora_do_escopo.md` | Perguntas fora do escopo da loja (apps de música, aulas) |
+| Arquivo | Cenário | Tipo |
+|---------|---------|------|
+| [`01_catalogo_violoes.md`](examples/01_catalogo_violoes.md) | Violões disponíveis até R$1.000 | Consulta ao catálogo (DB) |
+| [`02_endereco_loja.md`](examples/02_endereco_loja.md) | Qual o endereço da loja? | Informações gerais (prompt) |
+| [`03_preco_takamine.md`](examples/03_preco_takamine.md) | Quanto custa o Takamine GD20? | Consulta de preço (DB) |
+| [`04_politica_devolucao.md`](examples/04_politica_devolucao.md) | Arrependimento + compra há 10 dias | **Não trivial** — política via RAG + prazo CDC |
+| [`05_fora_do_escopo.md`](examples/05_fora_do_escopo.md) | Apps de aula / aulas particulares | Fora do escopo da loja |
+
+Para regenerar as conversas a partir do agente local:
+
+```bash
+python scripts/generate_examples.py
+```
 
 ---
 
