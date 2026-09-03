@@ -46,6 +46,27 @@ export default function ChatClient() {
     );
   }
 
+  async function startFreshSession(savedPhone: string, savedName: string | null) {
+    const session = await createSession('web');
+    setSessionId(session.session_id);
+    localStorage.setItem('chat_session_id', session.session_id);
+
+    let name = savedName;
+    if (savedPhone) {
+      const identified = await tryIdentify(session.session_id, savedPhone, false);
+      name = identified || name;
+    }
+
+    setMessages([{
+      message_id: 'welcome',
+      role: 'assistant',
+      content: welcomeContent(name),
+      created_at: new Date().toISOString(),
+    }]);
+
+    return session.session_id;
+  }
+
   async function initSession() {
     try {
       const savedPhone = localStorage.getItem(PHONE_STORAGE_KEY) || '';
@@ -55,35 +76,36 @@ export default function ChatClient() {
 
       const savedSession = localStorage.getItem('chat_session_id');
       if (savedSession) {
-        setSessionId(savedSession);
-        const [history, session] = await Promise.all([
-          getMessages(savedSession),
-          getSession(savedSession).catch(() => null),
-        ]);
-        setMessages(history.messages);
+        // Sessão pode ter sido apagada no banco (ex.: limpeza de testes)
+        const session = await getSession(savedSession).catch(() => null);
+        if (!session) {
+          localStorage.removeItem('chat_session_id');
+          await startFreshSession(savedPhone, savedName);
+          return;
+        }
 
-        if (session?.customer_id && savedName) {
+        setSessionId(savedSession);
+        try {
+          const history = await getMessages(savedSession);
+          setMessages(history.messages.length > 0 ? history.messages : [{
+            message_id: 'welcome',
+            role: 'assistant',
+            content: welcomeContent(savedName),
+            created_at: new Date().toISOString(),
+          }]);
+        } catch {
+          localStorage.removeItem('chat_session_id');
+          await startFreshSession(savedPhone, savedName);
+          return;
+        }
+
+        if (session.customer_id && savedName) {
           setCustomerName(savedName);
         } else if (savedPhone && !savedName) {
           await tryIdentify(savedSession, savedPhone, false);
         }
       } else {
-        const session = await createSession('web');
-        setSessionId(session.session_id);
-        localStorage.setItem('chat_session_id', session.session_id);
-
-        let name = savedName;
-        if (savedPhone) {
-          const identified = await tryIdentify(session.session_id, savedPhone, false);
-          name = identified || name;
-        }
-
-        setMessages([{
-          message_id: 'welcome',
-          role: 'assistant',
-          content: welcomeContent(name),
-          created_at: new Date().toISOString(),
-        }]);
+        await startFreshSession(savedPhone, savedName);
       }
     } catch (error) {
       console.error('Erro ao iniciar sessão:', error);
@@ -145,10 +167,11 @@ export default function ChatClient() {
   async function handleSend() {
     if (!input.trim() || !sessionId || loading) return;
 
+    const text = input.trim();
     const userMessage: Message = {
       message_id: `temp-${Date.now()}`,
       role: 'user',
-      content: input.trim(),
+      content: text,
       created_at: new Date().toISOString(),
     };
 
@@ -157,7 +180,28 @@ export default function ChatClient() {
     setLoading(true);
 
     try {
-      const response: ChatResponse = await sendMessage(sessionId, userMessage.content);
+      let activeSessionId = sessionId;
+      let response: ChatResponse;
+
+      try {
+        response = await sendMessage(activeSessionId, text);
+      } catch (firstError) {
+        const msg = firstError instanceof Error ? firstError.message : '';
+        // Sessão sumiu no servidor → cria outra e reenvia uma vez
+        if (/sess[aã]o n[aã]o encontrada/i.test(msg) || /404/i.test(msg)) {
+          localStorage.removeItem('chat_session_id');
+          const session = await createSession('web');
+          activeSessionId = session.session_id;
+          setSessionId(activeSessionId);
+          localStorage.setItem('chat_session_id', activeSessionId);
+          if (phoneInput.trim()) {
+            await tryIdentify(activeSessionId, phoneInput, false);
+          }
+          response = await sendMessage(activeSessionId, text);
+        } else {
+          throw firstError;
+        }
+      }
 
       const assistantMessage: Message = {
         message_id: response.message_id,
@@ -169,10 +213,13 @@ export default function ChatClient() {
       setMessages(prev => [...prev, assistantMessage]);
     } catch (error) {
       console.error('Erro ao enviar mensagem:', error);
+      const detail = error instanceof Error ? error.message : '';
       setMessages(prev => [...prev, {
         message_id: `error-${Date.now()}`,
         role: 'assistant',
-        content: 'Desculpe, ocorreu um erro ao processar sua mensagem. Por favor, tente novamente.',
+        content:
+          'Desculpe, ocorreu um erro ao processar sua mensagem. Por favor, tente novamente.' +
+          (detail ? `\n\n(${detail})` : ''),
         created_at: new Date().toISOString(),
       }]);
     } finally {

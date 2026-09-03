@@ -92,7 +92,14 @@ export async function sendMessage(sessionId: string, message: string): Promise<C
   });
   if (!res.ok) {
     const error = await res.json().catch(() => ({}));
-    throw new Error(error.detail || 'Falha ao enviar mensagem');
+    const detail = error.detail;
+    const text =
+      typeof detail === 'string'
+        ? detail
+        : Array.isArray(detail)
+          ? detail.map((d: { msg?: string }) => d.msg).filter(Boolean).join('; ')
+          : `Falha ao enviar mensagem (${res.status})`;
+    throw new Error(text || `Falha ao enviar mensagem (${res.status})`);
   }
   return res.json();
 }
