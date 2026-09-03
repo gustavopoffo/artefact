@@ -646,6 +646,136 @@ O wrapper `scripts/mcp-postgrest.cjs` lê o `.env` e inicia `@supabase/mcp-serve
 
 ---
 
+## Como Rodar o Projeto
+
+### Pré-requisitos
+
+- Python 3.11+
+- Conta no [Supabase](https://supabase.com) com o projeto criado e as migrations aplicadas
+- Chave de API da [OpenAI](https://platform.openai.com)
+
+### 1. Clone e instale dependências
+
+```bash
+git clone https://github.com/gustavopoffo/artefact.git
+cd artefact
+pip install -r requirements.txt
+```
+
+### 2. Configure as variáveis de ambiente
+
+```bash
+cp .env.example .env
+```
+
+Edite o `.env` com suas credenciais:
+
+```env
+SUPABASE_REST_URL=https://<projeto>.supabase.co/rest/v1
+SUPABASE_KEY=<service_role_secret>
+OPENAI_API_KEY=sk-...
+```
+
+> **SUPABASE_KEY:** use a `service_role` secret (Project Settings → API → Project API Keys). Nunca a `anon public`.
+
+### 3. Popule o banco com os dados de RAG e prompts
+
+```bash
+python scripts/seed_rag.py
+```
+
+Este script:
+- Gera embeddings para os 14 chunks de política da loja via `text-embedding-3-small`
+- Insere os chunks na tabela `rag_chunks` (é idempotente — ignora chunks já existentes)
+- Insere o `system_prompt` v1.0.0 em `agent_prompts`
+
+> **Os dados de e-commerce** (produtos, clientes, pedidos) já foram importados dos CSVs para o Supabase e estão no banco. Nenhuma ação adicional é necessária.
+
+### 4. Rode o agente
+
+**Via CLI interativa:**
+
+```bash
+python -m agent.main
+```
+
+**Via Python:**
+
+```python
+from agent import Agent
+
+agent = Agent(channel="web")
+response = agent.chat("Vocês têm violão Yamaha?")
+
+print(response.content)
+print(f"Tokens: {response.tokens_input} + {response.tokens_output}")
+print(f"Tempo: {response.response_time_ms}ms")
+print(f"RAG chunks usados: {response.rag_chunks_used}")
+print(f"Cliente identificado: {response.customer_identified}")
+```
+
+---
+
+## Exemplos de Interação
+
+A pasta `examples/` contém 5 conversas reais geradas com o agente em funcionamento, cobrindo os principais cenários:
+
+| Arquivo | Cenário |
+|---------|---------|
+| `01_catalogo_violoes.md` | Consulta ao catálogo — violões disponíveis até R$1.000 |
+| `02_politica_devolucao.md` | Política de devolução — situação não trivial (compra há 10 dias) |
+| `03_preco_produto_especifico.md` | Consulta de preço de produto específico + verificação de promoção |
+| `04_status_pedido.md` | Identificação do cliente por email + pedido sem cadastro |
+| `05_fora_do_escopo.md` | Perguntas fora do escopo da loja (apps de música, aulas) |
+
+---
+
+## Limitações Conhecidas e Próximos Passos
+
+### Limitações atuais
+
+| Limitação | Impacto | O que faria com mais tempo |
+|-----------|---------|---------------------------|
+| **Interface apenas CLI** | Sem frontend para o usuário final interagir | Criar endpoint FastAPI + widget de chat embeddable |
+| **Identificação de cliente por email/telefone explícito** | O cliente precisa digitar o contato — sem login/auth | Integrar com WhatsApp Business API ou sistema de autenticação |
+| **RAG com apenas 14 chunks fixos** | Novos documentos exigem curadoria manual | Pipeline automático com Docling (OCR) + chunker semântico para escalar |
+| **Busca de produto sem acento nativo** | Contorna com mapeamento em Python; ideal seria extensão `unaccent` no PostgreSQL | Habilitar extensão `unaccent` via migration e usar `ilike` nos dados normalizados |
+| **Sem memória de longo prazo entre sessões** | Agente não "lembra" preferências de sessões anteriores do mesmo cliente | Salvar preferências do cliente em `customers.metadata` e carregar na próxima sessão |
+| **Apenas 1 provedor LLM (OpenAI)** | Dependência de um único fornecedor | Abstrair o LLM para suportar Anthropic/Gemini como fallback |
+| **Modelo de avaliação reativo** | Rating só coletado depois da resposta, por humano | Sistema automático de avaliação usando LLM como juiz (LLM-as-a-judge) |
+
+### O que faria com mais tempo
+
+1. **API REST (FastAPI)** — expor o agente como um serviço HTTP para integração com WhatsApp, web ou app mobile
+2. **Dashboard de métricas** — frontend para visualizar `v_agent_accuracy_metrics`, `v_rag_performance`, `v_low_rated_responses` em tempo real
+3. **Avaliação automática de respostas** — usar um segundo LLM para avaliar se a resposta foi factualmente correta dado o contexto, gerando rating sem necessitar de humano para cada mensagem
+4. **Curadoria iterativa do prompt** — com avaliação automática rodando, seria possível comparar versões do prompt objetivamente e ajustar com base em dados reais
+5. **Escalabilidade do RAG** — adicionar novos documentos (catálogos de fornecedores, FAQs) via pipeline automatizado com Docling e chunker semântico
+
+---
+
+## Uso de IA no Desenvolvimento
+
+Este projeto foi desenvolvido com o auxílio do [Cursor IDE](https://cursor.com) com Claude Sonnet 4.5 como assistente de código.
+
+### Como foi usado
+
+| Etapa | Uso do Cursor/Claude |
+|-------|----------------------|
+| **Modelagem do banco** | Revisão crítica das tabelas, sugestão de constraints e índices, identificação de relacionamentos faltantes |
+| **Arquitetura RAG** | Análise do PDF seção a seção, decisão sobre o que vai para RAG vs. system prompt, curadoria dos 14 chunks |
+| **Implementação do agente** | Geração dos módulos `database.py`, `rag.py`, `llm.py`, `chat.py` com pair programming iterativo |
+| **Debug** | Identificação de bugs como: `ilike` sem acento, pattern regex capturando parte errada da mensagem, `message_id` sendo logado antes de existir |
+| **Documentação** | Estruturação do README com justificativas técnicas, diagramas ASCII, tabelas de decisão |
+
+### Workflow adotado
+
+O fluxo foi sempre **humano no loop de decisão**: o assistente propunha soluções, o desenvolvedor avaliava a lógica, identificava gaps e redirecionava. Nenhuma decisão arquitetural foi delegada inteiramente ao modelo — todas foram revisadas, questionadas e frequentemente modificadas antes de implementar.
+
+Exemplo concreto: o assistente inicialmente sugeriu usar Docling para OCR do PDF. O desenvolvedor questionou se fazia sentido rodar OCR em um PDF com texto nativo — e a decisão final foi extrair manualmente, com justificativa documentada na "Decisão 2" acima.
+
+---
+
 ## Status
 
 - [x] Migrations aplicadas no Supabase
@@ -654,30 +784,7 @@ O wrapper `scripts/mcp-postgrest.cjs` lê o `.env` e inicia `@supabase/mcp-serve
 - [x] System prompt v1.0.0 e 14 chunks de política definidos e documentados
 - [x] Embeddings gerados e dados populados via `seed_rag.py`
 - [x] Lógica do agente implementada (`agent/`)
-- [ ] Criar endpoint da API (FastAPI)
-- [ ] Criar frontend de chat
-- [ ] Dashboard de métricas e acompanhamento
-
-## Uso do Agente
-
-```python
-from agent import Agent
-
-# Criar agente (inicia sessão automaticamente)
-agent = Agent(channel="web")
-
-# Enviar mensagem
-response = agent.chat("Vocês têm violão Yamaha?")
-print(response.content)
-
-# Métricas disponíveis
-print(f"Tokens: {response.tokens_input} + {response.tokens_output}")
-print(f"Tempo: {response.response_time_ms}ms")
-print(f"RAG chunks usados: {response.rag_chunks_used}")
-```
-
-Ou via CLI:
-
-```bash
-python -m agent.main
-```
+- [x] Exemplos de interação documentados em `examples/`
+- [ ] Endpoint REST (FastAPI)
+- [ ] Frontend de chat
+- [ ] Dashboard de métricas

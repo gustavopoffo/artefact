@@ -130,10 +130,9 @@ class Database:
     # -------------------------------------------------------------------------
 
     def get_active_prompt(self, name: str = "system_prompt") -> dict | None:
-        """Busca o prompt ativo por nome."""
-        result = self._request("GET", "agent_prompts", params={
+        """Busca o prompt ativo por nome via v_active_prompt."""
+        result = self._request("GET", "v_active_prompt", params={
             "name": f"eq.{name}",
-            "is_active": "eq.true",
             "select": "prompt_id,name,content,version,tokens_estimated",
         })
         return result[0] if result else None
@@ -209,55 +208,111 @@ class Database:
         })
         return result[0] if result else None
 
+    def get_customer_summary(self, customer_id: int) -> dict | None:
+        """Resumo completo do cliente via v_customer_orders_summary."""
+        result = self._request("GET", "v_customer_orders_summary", params={
+            "customer_id": f"eq.{customer_id}",
+            "select": "*",
+        })
+        return result[0] if result else None
+
     def get_customer_orders(self, customer_id: int) -> list[dict]:
-        """Busca pedidos de um cliente."""
+        """Busca pedidos detalhados de um cliente."""
         return self._request("GET", "v_order_details", params={
             "customer_id": f"eq.{customer_id}",
             "select": "*",
             "order": "order_date.desc",
         })
 
+    def link_customer_to_session(self, session_id: str, customer_id: int) -> None:
+        """Vincula um cliente identificado à sessão de chat."""
+        self._request("PATCH", "chat_sessions",
+            {"customer_id": customer_id},
+            params={"session_id": f"eq.{session_id}"}
+        )
+
     # -------------------------------------------------------------------------
     # Products
     # -------------------------------------------------------------------------
 
+    # Mapeamento de termos sem acento → fragmentos da categoria real no banco.
+    # Necessário porque ilike não faz busca accent-insensitive no PostgreSQL
+    # sem a extensão unaccent. Categorias reais: Violões, Guitarras, Baixos,
+    # Baterias e Percussão, Teclados e Pianos, Ukuleles,
+    # Instrumentos de Sopro (Madeiras/Metais), Cordas Orquestrais.
+    # Chaves normalizadas (sem acento, minúsculas) → fragmento do nome da categoria no banco.
+    # Categorias reais: Violões, Guitarras, Baixos, Baterias e Percussão,
+    # Teclados e Pianos, Ukuleles, Instrumentos de Sopro (Madeiras/Metais),
+    # Cordas Orquestrais.
+    CATEGORY_ALIASES: dict[str, str] = {
+        "violao": "Viol",
+        "violoes": "Viol",
+        "guitarra": "Guitar",
+        "guitarras": "Guitar",
+        "baixo": "Baixo",
+        "baixos": "Baixo",
+        "bateria": "Bateria",
+        "baterias": "Bateria",
+        "percussao": "Percuss",
+        "teclado": "Teclad",
+        "teclados": "Teclad",
+        "piano": "Piano",
+        "pianos": "Piano",
+        "ukulele": "Ukulel",
+        "sopro": "Sopro",
+        "cordas": "Cordas",
+        "madeira": "Madeira",
+        "metal": "Metal",
+        "orquestral": "Orquestral",
+    }
+
+    # Palavras comuns que não devem ser usadas como termos de busca
+    SEARCH_STOP_WORDS = {
+        "ate", "por", "para", "com", "sem", "uma", "uns", "umas", "tem",
+        "que", "nao", "noa", "sim", "mais", "menos", "qual", "quais",
+        "disponiveis", "disponivel", "preco", "valor", "custo",
+    }
+
     def search_products(self, query: str, limit: int = 5) -> list[dict]:
         """
-        Busca produtos por nome.
-        Divide a query em palavras e busca produtos que contenham qualquer uma delas.
+        Busca produtos por nome ou categoria.
+        Aplica aliases para contornar a ausência de busca accent-insensitive
+        no PostgREST sem a extensão unaccent.
         """
-        # Divide query em palavras significativas (>2 chars)
-        words = [w.strip() for w in query.split() if len(w.strip()) > 2]
-        
+        words = [
+            w.strip().lower() for w in query.split()
+            if len(w.strip()) > 2 and w.strip().lower() not in self.SEARCH_STOP_WORDS
+        ]
+
         if not words:
             return []
 
         all_results = []
         seen_ids = set()
+        select = "product_id,product_name,price_brl,stock_quantity,status,category_name"
+
+        def _add(results: list[dict]) -> None:
+            for r in results:
+                if r["product_id"] not in seen_ids:
+                    seen_ids.add(r["product_id"])
+                    all_results.append(r)
 
         for word in words:
-            results = self._request("GET", "v_products_with_category", params={
+            # Busca no nome do produto (sem acento geralmente ok — são nomes de marca)
+            _add(self._request("GET", "v_products_with_category", params={
                 "product_name": f"ilike.*{word}*",
-                "select": "product_id,product_name,price_brl,stock_quantity,status,category_name",
+                "select": select,
                 "limit": str(limit * 2),
-            })
-            for r in results:
-                if r["product_id"] not in seen_ids:
-                    seen_ids.add(r["product_id"])
-                    all_results.append(r)
+            }))
 
-        # Também busca por categoria
-        for word in words:
-            results = self._request("GET", "v_products_with_category", params={
-                "category_name": f"ilike.*{word}*",
+            # Busca na categoria via alias mapeado ou direto
+            cat_fragment = self.CATEGORY_ALIASES.get(word, word)
+            _add(self._request("GET", "v_products_with_category", params={
+                "category_name": f"ilike.*{cat_fragment}*",
                 "status": "eq.active",
-                "select": "product_id,product_name,price_brl,stock_quantity,status,category_name",
+                "select": select,
                 "limit": str(limit),
-            })
-            for r in results:
-                if r["product_id"] not in seen_ids:
-                    seen_ids.add(r["product_id"])
-                    all_results.append(r)
+            }))
 
         return all_results[:limit]
 
