@@ -140,10 +140,17 @@ class Database:
 
     def increment_prompt_usage(self, prompt_id: str) -> None:
         """Incrementa contador de uso do prompt."""
-        try:
-            self._request("POST", "rpc/increment_prompt_usage", {"p_prompt_id": prompt_id})
-        except RuntimeError:
-            pass
+        # Busca valor atual e incrementa
+        result = self._request("GET", "agent_prompts", params={
+            "prompt_id": f"eq.{prompt_id}",
+            "select": "times_used",
+        })
+        if result:
+            current = result[0].get("times_used", 0) or 0
+            self._request("PATCH", "agent_prompts",
+                {"times_used": current + 1},
+                params={"prompt_id": f"eq.{prompt_id}"}
+            )
 
     # -------------------------------------------------------------------------
     # RAG Query Log
@@ -177,10 +184,10 @@ class Database:
 
     def update_rag_log_message(self, log_id: str, message_id: str) -> None:
         """Atualiza o message_id no log de RAG após criar a mensagem."""
-        self._request("POST", "rpc/update_rag_log_message", {
-            "p_log_id": log_id,
-            "p_message_id": message_id,
-        })
+        self._request("PATCH", "rag_query_log", 
+            {"message_id": message_id},
+            params={"log_id": f"eq.{log_id}"}
+        )
 
     # -------------------------------------------------------------------------
     # Customers
