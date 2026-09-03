@@ -1,4 +1,6 @@
-const API_BASE = 'http://localhost:8000';
+export const API_BASE =
+  (import.meta.env.VITE_API_URL as string | undefined)?.replace(/\/$/, '') ||
+  'http://localhost:8000';
 
 export interface Session {
   session_id: string;
@@ -157,6 +159,23 @@ export async function togglePromotion(promotionId: number, isActive: boolean): P
   if (!res.ok) {
     const error = await res.json().catch(() => ({}));
     throw new Error(error.detail || 'Falha ao atualizar promoção');
+  }
+  return res.json();
+}
+
+export async function rateMessage(
+  messageId: string,
+  rating: 'positive' | 'negative' | 'neutral',
+  feedback?: string,
+): Promise<{ message_id: string; rating: string }> {
+  const res = await fetch(`${API_BASE}/admin/messages/${messageId}/rating`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ rating, feedback: feedback ?? null }),
+  });
+  if (!res.ok) {
+    const error = await res.json().catch(() => ({}));
+    throw new Error(error.detail || 'Falha ao avaliar mensagem');
   }
   return res.json();
 }

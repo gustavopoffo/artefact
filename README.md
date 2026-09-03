@@ -761,6 +761,76 @@ print(f"Cliente identificado: {response.customer_identified}")
 
 ---
 
+## Deploy (Vercel + Render)
+
+Arquitetura em produção:
+
+```
+Browser → Vercel (frontend Vite/React)
+              │  VITE_API_URL
+              ▼
+         Render (FastAPI / uvicorn)
+              ├── Supabase (PostgREST)
+              └── OpenAI (embeddings + chat)
+```
+
+### 1. API no Render
+
+1. Conta em [render.com](https://render.com) → **New → Web Service**
+2. Conecte o repositório GitHub (`gustavopoffo/artefact`)
+3. Configuração sugerida:
+   - **Root Directory:** (raiz do repo)
+   - **Runtime:** Python 3
+   - **Build Command:** `pip install -r requirements.txt`
+   - **Start Command:** `uvicorn api.main:app --host 0.0.0.0 --port $PORT`
+   - **Health Check Path:** `/health`
+4. Variáveis de ambiente (Environment):
+
+| Variável | Valor |
+|----------|--------|
+| `SUPABASE_REST_URL` | `https://<projeto>.supabase.co/rest/v1` |
+| `SUPABASE_KEY` | `service_role` secret |
+| `OPENAI_API_KEY` | chave OpenAI |
+| `FRONTEND_ORIGIN` | URL da Vercel (ex. `https://seu-app.vercel.app`) — ou `*` no início |
+
+5. Após o deploy, teste: `https://<seu-servico>.onrender.com/health`
+
+> **Cold start:** no plano free o serviço “dorme” após inatividade. A primeira request pode demorar ~30–60s. Chamadas ao chat já usam timeout de 60s na OpenAI.
+
+Opcional: use o blueprint [`render.yaml`](render.yaml) (New → Blueprint).
+
+### 2. Frontend na Vercel
+
+1. Conta em [vercel.com](https://vercel.com) → **Add New Project** → importe o mesmo repo
+2. Configuração:
+   - **Root Directory:** `frontend`
+   - **Framework Preset:** Vite
+   - **Build Command:** `npm run build` (padrão)
+   - **Output Directory:** `dist` (padrão)
+3. Environment Variable:
+
+| Variável | Valor |
+|----------|--------|
+| `VITE_API_URL` | URL pública do Render **sem** barra no final (ex. `https://emporio-musica-api.onrender.com`) |
+
+4. Deploy. O [`frontend/vercel.json`](frontend/vercel.json) faz rewrite SPA para o React Router (`/admin`, `/admin/promocoes`, etc.).
+
+5. Atualize no Render a variável `FRONTEND_ORIGIN` com a URL final da Vercel e faça redeploy da API (se não estiver usando `*`).
+
+### 3. Smoke test em produção
+
+1. `GET /health` na API → `{"status":"ok",...}`
+2. Abrir o site na Vercel → enviar “oi” no chat
+3. Admin → Promoções → ativar/desativar um item
+4. Perguntar o preço de um produto em promoção e conferir o de/por
+
+### Variáveis locais (desenvolvimento)
+
+- Raiz: copie [`.env.example`](.env.example) → `.env` (Supabase + OpenAI + `FRONTEND_ORIGIN`)
+- Front: copie [`frontend/.env.example`](frontend/.env.example) → `frontend/.env` com `VITE_API_URL=http://localhost:8000`
+
+---
+
 ## Exemplos de Interação
 
 A pasta `examples/` contém 5 conversas reais geradas com o agente em funcionamento, cobrindo os principais cenários:
@@ -835,6 +905,7 @@ Exemplo concreto: o assistente inicialmente sugeriu usar Docling para OCR do PDF
 - [x] Painel admin de conversas + avaliação de acurácia
 - [x] Dashboard de métricas
 - [x] Admin de promoções (ativar/desativar `is_active` e refletir preço no chat)
+- [x] Preparado para deploy (Vercel front + Render API)
 
 ## API REST (FastAPI)
 

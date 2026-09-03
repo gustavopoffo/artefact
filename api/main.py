@@ -12,6 +12,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
 from agent import Agent
+from agent.config import config
 from agent.database import db
 
 from .schemas import (
@@ -41,10 +42,18 @@ app = FastAPI(
     version="1.0.0",
 )
 
+_origins = [o.strip() for o in config.frontend_origin.split(",") if o.strip()]
+if not _origins or _origins == ["*"]:
+    _cors_origins = ["*"]
+    _cors_credentials = False  # incompatível com allow_origins=["*"]
+else:
+    _cors_origins = _origins
+    _cors_credentials = True
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
+    allow_origins=_cors_origins,
+    allow_credentials=_cors_credentials,
     allow_methods=["*"],
     allow_headers=["*"],
 )

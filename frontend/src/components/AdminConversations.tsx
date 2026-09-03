@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { MessageSquare, User, ChevronRight, RefreshCw, Search, ThumbsUp, ThumbsDown } from 'lucide-react';
 import { format, formatDistanceToNow } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
+import { API_BASE, rateMessage as apiRateMessage } from '../api';
 
 interface SessionItem {
   session_id: string;
@@ -43,7 +44,7 @@ export default function AdminConversations() {
   async function loadSessions() {
     setLoading(true);
     try {
-      const res = await fetch('http://localhost:8000/admin/sessions');
+      const res = await fetch(`${API_BASE}/admin/sessions`);
       if (res.ok) {
         const data = await res.json();
         setSessions(data);
@@ -59,7 +60,7 @@ export default function AdminConversations() {
     setLoadingMessages(true);
     setSelectedSession(sessionId);
     try {
-      const res = await fetch(`http://localhost:8000/sessions/${sessionId}/messages?limit=100`);
+      const res = await fetch(`${API_BASE}/sessions/${sessionId}/messages?limit=100`);
       if (res.ok) {
         const data = await res.json();
         setMessages(data.messages);
@@ -73,16 +74,10 @@ export default function AdminConversations() {
 
   async function rateMessage(messageId: string, rating: 'positive' | 'negative') {
     try {
-      const res = await fetch(`http://localhost:8000/admin/messages/${messageId}/rating`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ rating }),
-      });
-      if (res.ok) {
-        setMessages((prev) =>
-          prev.map((m) => (m.message_id === messageId ? { ...m, rating } : m))
-        );
-      }
+      await apiRateMessage(messageId, rating);
+      setMessages((prev) =>
+        prev.map((m) => (m.message_id === messageId ? { ...m, rating } : m))
+      );
     } catch (error) {
       console.error('Erro ao avaliar mensagem:', error);
     }
