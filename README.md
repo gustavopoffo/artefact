@@ -605,6 +605,15 @@ Este diagrama mostra exatamente o que acontece em cada etapa de uma conversa, qu
 
 ```
 artefact/
+├── agent/                                   # Agente conversacional
+│   ├── __init__.py                         # Exporta classe Agent
+│   ├── config.py                           # Configurações (carrega .env)
+│   ├── database.py                         # Acesso ao Supabase via PostgREST
+│   ├── embeddings.py                       # Geração de embeddings (OpenAI)
+│   ├── rag.py                              # Busca semântica (match_chunks)
+│   ├── llm.py                              # Interface com LLM (GPT)
+│   ├── chat.py                             # Orquestração principal do fluxo
+│   └── main.py                             # CLI para testes
 ├── data/                                    # CSVs de origem (já importados ao Supabase)
 │   ├── desafio_tecnico_ai_eng - categories.csv
 │   ├── desafio_tecnico_ai_eng - customers.csv
@@ -663,7 +672,31 @@ O wrapper `scripts/mcp-postgrest.cjs` lê o `.env` e inicia `@supabase/mcp-serve
 - [x] Estrutura RAG criada (`agent_prompts`, `rag_chunks`, `rag_query_log`, função `match_chunks`)
 - [x] System prompt v1.0.0 e 14 chunks de política definidos e documentados
 - [x] Embeddings gerados e dados populados via `seed_rag.py`
-- [ ] Implementar lógica do agente (`feature/agent`)
-- [ ] Criar endpoint da API
+- [x] Lógica do agente implementada (`agent/`)
+- [ ] Criar endpoint da API (FastAPI)
 - [ ] Criar frontend de chat
 - [ ] Dashboard de métricas e acompanhamento
+
+## Uso do Agente
+
+```python
+from agent import Agent
+
+# Criar agente (inicia sessão automaticamente)
+agent = Agent(channel="web")
+
+# Enviar mensagem
+response = agent.chat("Vocês têm violão Yamaha?")
+print(response.content)
+
+# Métricas disponíveis
+print(f"Tokens: {response.tokens_input} + {response.tokens_output}")
+print(f"Tempo: {response.response_time_ms}ms")
+print(f"RAG chunks usados: {response.rag_chunks_used}")
+```
+
+Ou via CLI:
+
+```bash
+python -m agent.main
+```
