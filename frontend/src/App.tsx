@@ -4,6 +4,7 @@ import AdminLayout from './layouts/AdminLayout';
 import AdminConversations from './components/AdminConversations';
 import AdminDashboard from './components/AdminDashboard';
 import AdminPromotions from './components/AdminPromotions';
+import AdminSettings from './components/AdminSettings';
 
 export default function App() {
   return (
@@ -17,6 +18,7 @@ export default function App() {
           <Route index element={<AdminConversations />} />
           <Route path="dashboard" element={<AdminDashboard />} />
           <Route path="promocoes" element={<AdminPromotions />} />
+          <Route path="modelo" element={<AdminSettings />} />
         </Route>
       </Routes>
     </BrowserRouter>

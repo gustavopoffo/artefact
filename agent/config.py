@@ -44,7 +44,7 @@ class Config:
     frontend_origin: str = "*"
     embedding_model: str = "text-embedding-3-small"
     embedding_dims: int = 1536
-    llm_model: str = "gpt-4o-mini"
+    llm_model: str = "gpt-4o"
     rag_match_count: int = 3
     rag_similarity_threshold: float = 0.5
 
@@ -54,6 +54,7 @@ class Config:
         supabase_key = env("SUPABASE_KEY")
         openai_api_key = env("OPENAI_API_KEY")
         frontend_origin = env("FRONTEND_ORIGIN", "*")
+        llm_model = env("LLM_MODEL", "gpt-4o") or "gpt-4o"
 
         if not supabase_url or not supabase_key:
             raise RuntimeError("SUPABASE_REST_URL e SUPABASE_KEY sao obrigatorios")
@@ -65,6 +66,7 @@ class Config:
             supabase_key=supabase_key,
             openai_api_key=openai_api_key,
             frontend_origin=frontend_origin,
+            llm_model=llm_model,
         )
 
 

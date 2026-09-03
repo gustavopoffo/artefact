@@ -163,6 +163,31 @@ export async function togglePromotion(promotionId: number, isActive: boolean): P
   return res.json();
 }
 
+export interface AdminSettings {
+  llm_model: string;
+  allowed_models: { id: string; label: string }[];
+  default_model: string;
+}
+
+export async function getAdminSettings(): Promise<AdminSettings> {
+  const res = await fetch(`${API_BASE}/admin/settings`);
+  if (!res.ok) throw new Error('Falha ao carregar configurações');
+  return res.json();
+}
+
+export async function updateAdminSettings(llmModel: string): Promise<AdminSettings> {
+  const res = await fetch(`${API_BASE}/admin/settings`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ llm_model: llmModel }),
+  });
+  if (!res.ok) {
+    const error = await res.json().catch(() => ({}));
+    throw new Error(error.detail || 'Falha ao atualizar modelo');
+  }
+  return res.json();
+}
+
 export async function rateMessage(
   messageId: string,
   rating: 'positive' | 'negative' | 'neutral',

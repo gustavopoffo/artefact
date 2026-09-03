@@ -160,3 +160,18 @@ class PromotionItem(BaseModel):
 
 class TogglePromotionRequest(BaseModel):
     is_active: bool
+
+
+class AllowedModelItem(BaseModel):
+    id: str
+    label: str
+
+
+class AdminSettingsResponse(BaseModel):
+    llm_model: str
+    allowed_models: list[AllowedModelItem]
+    default_model: str = "gpt-4o"
+
+
+class UpdateAdminSettingsRequest(BaseModel):
+    llm_model: str = Field(..., description="ID do modelo OpenAI (ex: gpt-4o)")

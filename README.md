@@ -1,5 +1,38 @@
 # Artefact — Agente Conversacional para E-commerce de Instrumentos Musicais
 
+Agente de atendimento da **Empório da Música** (Campo Grande/MS): responde clientes com persona da loja, consulta produtos/pedidos no banco e políticas via RAG, e oferece painel admin para a equipe acompanhar conversas, métricas, promoções e o modelo de IA.
+
+## Como ver o projeto
+
+Demo online (frontend na Vercel):
+
+**https://emporio-five.vercel.app/**
+
+| Visão | URL |
+|-------|-----|
+| Chat do cliente | [https://emporio-five.vercel.app/](https://emporio-five.vercel.app/) |
+| Admin — conversas | [https://emporio-five.vercel.app/admin](https://emporio-five.vercel.app/admin) |
+| Admin — dashboard | [https://emporio-five.vercel.app/admin/dashboard](https://emporio-five.vercel.app/admin/dashboard) |
+| Admin — promoções | [https://emporio-five.vercel.app/admin/promocoes](https://emporio-five.vercel.app/admin/promocoes) |
+| Admin — modelo IA | [https://emporio-five.vercel.app/admin/modelo](https://emporio-five.vercel.app/admin/modelo) |
+
+## Índice
+
+1. [Visão geral](#visão-geral-do-projeto)
+2. [Entregáveis do desafio](#entregáveis-do-desafio)
+3. [Decisões técnicas](#decisões-técnicas)
+4. [Arquitetura](#arquitetura-do-sistema)
+5. [Banco de dados](#estrutura-do-banco-de-dados)
+6. [RAG e versionamento de prompts](#arquitetura-rag-e-versionamento-de-prompts)
+7. [Fluxo ponta a ponta](#fluxo-de-execução-do-agente-ponta-a-ponta)
+8. [Estrutura do código](#estrutura-do-projeto)
+9. [Como rodar](#como-rodar-o-projeto)
+10. [Deploy](#deploy-vercel--render)
+11. [Exemplos de interação](#exemplos-de-interação)
+12. [Limitações e próximos passos](#limitações-conhecidas-e-próximos-passos)
+13. [Uso de IA no desenvolvimento](#uso-de-ia-no-desenvolvimento)
+14. [API REST](#api-rest-fastapi)
+
 ## Visão Geral do Projeto
 
 Sistema completo de **agente conversacional com IA** para atendimento a clientes de uma loja de instrumentos musicais no Mato Grosso do Sul.
@@ -52,6 +85,38 @@ Sistema completo de **agente conversacional com IA** para atendimento a clientes
 | Políticas da loja | `rag_chunks` (RAG) | "Qual o prazo de devolução?" |
 | Formas de pagamento | Políticas + ENUMs | "Vocês parcelam em quantas vezes?" |
 | Horário de atendimento | Relógio local (Campo Grande) + prompt | Avisa retorno se fora do expediente |
+| Troca de modelo LLM | Admin → Modelo IA (`gpt-4o` padrão) | Equipe escolhe o modelo sem redeploy |
+
+---
+
+## Entregáveis do Desafio
+
+Mapeamento direto do [desafio técnico](desafio_tecnico_ai_eng_artefact.md) → o que este repositório entrega:
+
+| Pedido | Entrega |
+|--------|---------|
+| Agente em Python com persona da loja | `agent/` + prompt versionado **v2.1.2** (playbook de condução) |
+| Consultar dados (estoque, preço, pedido) | PostgREST → `products`, `promotions`, `orders`, `customers` |
+| Consultar políticas (troca, frete, pagamento) | RAG sobre `data/políticas_da_loja.pdf` → `rag_chunks` + `match_chunks` |
+| Fora de escopo | Prompt + exemplos (`examples/05_fora_do_escopo.md`) |
+| README com setup, decisões, limitações e uso de IA | Este arquivo |
+| 3–5 conversas de exemplo (uma não trivial) | `examples/01` … `05` (devolução = não trivial) |
+| Histórico de commits real | Repositório GitHub público |
+
+---
+
+## Decisões Técnicas
+
+Justificativas pedidas no enunciado (detalhamento do RAG nas [7 decisões](#arquitetura-rag-e-versionamento-de-prompts) abaixo).
+
+| Decisão | Escolha | Por quê |
+|---------|---------|---------|
+| **Abordagem do agente** | Híbrido: **intent leve + SQL/PostgREST + RAG** | Dados operacionais (preço/estoque/pedido) precisam ser factuais do banco; políticas são texto semântico — RAG. Evita “agente SQL livre” inventando queries e evita colocar o PDF inteiro no prompt. |
+| **Modelo / provedor** | OpenAI **`gpt-4o`** (padrão); admin pode trocar para mini / 4.1 | Bom equilíbrio qualidade × custo para atendimento. Mini fica disponível se quiser economizar (tom mais seco). Embeddings: `text-embedding-3-small`. |
+| **Interface** | **UI web** (chat WhatsApp-like) + **API FastAPI** + CLI opcional | Avaliador e “equipe da loja” usam o mesmo produto; API documentada em `/docs`. |
+| **Histórico** | `chat_sessions` + `chat_messages` no Supabase | Continuidade na sessão, métricas (tokens, latência, rating) e painel admin. |
+| **Tratamento dos dados** | CSVs → Supabase; PDF → chunks curados + embeddings | Domínio pequeno e estável: curadoria manual dos 14 chunks supera chunker genérico neste caso. |
+| **Persistência do prompt / modelo** | `agent_prompts` (versão ativa + `runtime_settings`) | Prompt versionado com rollback; modelo LLM muda no admin sem redeploy. |
 
 ---
 
@@ -141,6 +206,18 @@ Sistema completo de **agente conversacional com IA** para atendimento a clientes
                               │ rating              │
                               │ sources_consulted   │
                               └─────────────────────┘
+
+┌─────────────────────┐       ┌─────────────────────┐       ┌─────────────────────┐
+│   agent_prompts     │       │     rag_chunks      │       │   rag_query_log     │
+├─────────────────────┤       ├─────────────────────┤       ├─────────────────────┤
+│ prompt_id PK (UUID) │       │ chunk_id PK (UUID)  │       │ log_id PK           │
+│ name                │       │ content             │       │ query_text          │
+│ version             │       │ embedding (vector)  │       │ chunks_returned     │
+│ content             │       │ category            │       │ top/avg similarity  │
+│ is_active           │       │ keywords[]          │       │ session_id FK (null)│
+│ times_used          │       │ is_active           │       │ was_relevant        │
+└─────────────────────┘       └─────────────────────┘       └─────────────────────┘
+  ↑ system_prompt + runtime_settings (modelo LLM)
 ```
 
 ### Relacionamentos
@@ -153,7 +230,8 @@ Sistema completo de **agente conversacional com IA** para atendimento a clientes
 | `order_items.order_id` | `orders.order_id` | N:1 | Item pertence a um pedido |
 | `order_items.product_id` | `products.product_id` | N:1 | Item referencia um produto |
 | `chat_sessions.customer_id` | `customers.customer_id` | N:1 | Sessão pode pertencer a um cliente |
-| `chat_messages.session_id` | `chat_sessions.session_id` | N:1 | Mensagem pertence a uma sessão |
+| `chat_messages.session_id` | `chat_sessions.session_id` | N:1 | Mensagem pertence a uma sessão (cascade delete) |
+| `rag_query_log.session_id` | `chat_sessions.session_id` | N:1 | Log RAG opcionalmente ligado à sessão (set null) |
 
 ---
 
@@ -255,7 +333,7 @@ Mensagens individuais (cliente e IA).
 | `role` | enum | `user` (cliente), `assistant` (IA), `system` |
 | `content` | text | Texto da mensagem |
 | `created_at` | timestamptz | **Timestamp exato** |
-| `model_used` | text | Modelo de IA (gpt-4, claude-3) |
+| `model_used` | text | Modelo de IA (ex.: `gpt-4o`) |
 | `tokens_input` | integer | Tokens de entrada |
 | `tokens_output` | integer | Tokens de saída |
 | `response_time_ms` | integer | Tempo de resposta em ms |
@@ -272,6 +350,50 @@ Mensagens individuais (cliente e IA).
 
 ---
 
+### Domínio: RAG e Prompts
+
+#### `agent_prompts`
+Prompts versionados do agente. Também guarda config runtime (`name = runtime_settings`, JSON com `llm_model`).
+
+| Coluna | Tipo | Descrição |
+|--------|------|-----------|
+| `prompt_id` | uuid | PK |
+| `name` | text | Ex.: `system_prompt`, `runtime_settings` |
+| `version` | text | Semver (ex.: `2.1.2`) |
+| `content` | text | Texto do prompt ou JSON de settings |
+| `is_active` | boolean | Apenas um ativo por `name` (trigger) |
+| `times_used` | integer | Contador de uso |
+| `avg_accuracy` | numeric | Acurácia agregada (opcional) |
+
+#### `rag_chunks`
+Trechos de política com embedding para busca semântica.
+
+| Coluna | Tipo | Descrição |
+|--------|------|-----------|
+| `chunk_id` | uuid | PK |
+| `content` | text | Texto do chunk |
+| `embedding` | vector(1536) | Embedding OpenAI |
+| `category` | text | `pagamento`, `troca`, `frete`, etc. |
+| `keywords` | text[] | Termos de apoio à busca |
+| `is_active` | boolean | Soft-delete |
+
+#### `rag_query_log`
+Auditoria de cada busca RAG (similaridade, tempo, chunks).
+
+| Coluna | Tipo | Descrição |
+|--------|------|-----------|
+| `log_id` | uuid/bigint | PK |
+| `query_text` | text | Pergunta / query embutida |
+| `chunks_returned` | jsonb/array | IDs/conteúdos retornados |
+| `top_similarity` / `avg_similarity` | float | Scores |
+| `search_time_ms` | integer | Latência da busca |
+| `session_id` | uuid | FK opcional → `chat_sessions` |
+| `was_relevant` | boolean | Avaliação manual posterior |
+
+> Migration `20250903004500_remove_knowledge_sources.sql` remove a tabela legada `knowledge_sources` (substituída por `rag_chunks`).
+
+---
+
 ## Views para Acompanhamento
 
 ### E-commerce
@@ -285,7 +407,7 @@ Mensagens individuais (cliente e IA).
 | `v_customer_orders_summary` | Resumo por cliente |
 | `v_inventory_status` | Alertas de estoque |
 
-### Controle do Agente
+### Controle do Agente / RAG
 
 | View | Descrição |
 |------|-----------|
@@ -294,6 +416,9 @@ Mensagens individuais (cliente e IA).
 | `v_customer_chat_history` | Interações por cliente |
 | `v_agent_accuracy_metrics` | **Acurácia diária do agente** |
 | `v_low_rated_responses` | Respostas negativas para revisão |
+| `v_active_prompt` | Prompt(s) ativo(s) para o agente |
+| `v_rag_performance` | Taxa de relevância / similaridade do RAG |
+| `v_chunks_by_category` | Resumo dos chunks por categoria |
 
 ---
 
@@ -531,8 +656,8 @@ Este diagrama mostra exatamente o que acontece em cada etapa de uma conversa, qu
                                    │
                                    ▼
                         ┌──────────────────┐
-                        │     LLM API      │
-                        │   (GPT-4, etc)   │
+                        │   OpenAI Chat    │
+                        │  (padrão gpt-4o) │
                         └──────────────────┘
                                    │
                                    ▼
@@ -542,7 +667,7 @@ Este diagrama mostra exatamente o que acontece em cada etapa de uma conversa, qu
    │   session_id,                                                            │
    │   role = 'assistant',                                                    │
    │   content = "Temos 14 unidades do Yamaha F310 por R$ 699,90...",        │
-   │   model_used = 'gpt-4',                                                  │
+   │   model_used = 'gpt-4o',                                                 │
    │   tokens_input = 1850,                                                   │
    │   tokens_output = 120,                                                   │
    │   response_time_ms = 2340,                                               │
@@ -588,59 +713,63 @@ Este diagrama mostra exatamente o que acontece em cada etapa de uma conversa, qu
 
 ```
 artefact/
-├── agent/                                   # Agente conversacional
-│   ├── __init__.py                         # Exporta classe Agent
-│   ├── config.py                           # Configurações (carrega .env)
-│   ├── database.py                         # Acesso ao Supabase via PostgREST
-│   ├── embeddings.py                       # Geração de embeddings (OpenAI)
-│   ├── rag.py                              # Busca semântica (match_chunks)
-│   ├── llm.py                              # Interface com LLM (GPT)
-│   ├── chat.py                             # Orquestração principal do fluxo
-│   └── main.py                             # CLI para testes
-├── api/                                     # API REST (FastAPI)
-│   ├── __init__.py
-│   ├── schemas.py                          # Modelos Pydantic de request/response
-│   └── main.py                             # App FastAPI + endpoints
-├── frontend/                                # Interface React (Vite + Tailwind)
-│   ├── src/
-│   │   ├── components/
-│   │   │   ├── ChatClient.tsx              # Chat estilo WhatsApp (+ WhatsApp opcional no header)
-│   │   │   ├── AdminConversations.tsx      # Lista/histórico de conversas + rating
-│   │   │   ├── AdminDashboard.tsx          # Dashboard de métricas
-│   │   │   ├── AdminPromotions.tsx         # Ativar/desativar promoções (is_active)
-│   │   │   └── AdminSidebar.tsx
-│   │   ├── layouts/AdminLayout.tsx
-│   │   ├── api.ts                          # Cliente HTTP da API
-│   │   └── App.tsx                         # Rotas (/ , /admin , /admin/dashboard, /admin/promocoes)
-│   └── package.json
-├── data/                                    # CSVs de origem (já importados ao Supabase)
-│   ├── desafio_tecnico_ai_eng - categories.csv
-│   ├── desafio_tecnico_ai_eng - customers.csv
-│   ├── desafio_tecnico_ai_eng - products.csv
-│   ├── desafio_tecnico_ai_eng - promotions.csv
-│   ├── desafio_tecnico_ai_eng - orders.csv
-│   ├── desafio_tecnico_ai_eng - order_items.csv
-│   └── políticas_da_loja.pdf               # Documento fonte do RAG
+├── agent/                                   # Núcleo do agente (Python)
+│   ├── __init__.py                         # Exporta Agent
+│   ├── config.py                           # Env + Config (LLM_MODEL padrão gpt-4o)
+│   ├── database.py                         # PostgREST (sessões, produtos, prompts…)
+│   ├── embeddings.py                       # Embeddings OpenAI
+│   ├── rag.py                              # Busca semântica match_chunks
+│   ├── llm.py                              # Chat Completions (modelo por request)
+│   ├── runtime_settings.py                 # Modelo LLM ativo (admin + cache)
+│   ├── chat.py                             # Orquestração: intent → contexto → LLM
+│   └── main.py                             # CLI de teste
+├── api/                                     # API REST
+│   ├── schemas.py                          # Pydantic
+│   └── main.py                             # FastAPI (sessions, chat, admin)
+├── frontend/                                # Vite + React + Tailwind
+│   ├── public/favicon.svg                  # Nota musical
+│   ├── vercel.json                         # SPA rewrites
+│   └── src/
+│       ├── components/
+│       │   ├── ChatClient.tsx              # Chat cliente (+ WhatsApp no header)
+│       │   ├── AdminConversations.tsx      # Conversas + rating
+│       │   ├── AdminDashboard.tsx          # Métricas
+│       │   ├── AdminPromotions.tsx         # Toggle is_active
+│       │   ├── AdminSettings.tsx           # Seletor de modelo OpenAI
+│       │   └── AdminSidebar.tsx
+│       ├── layouts/AdminLayout.tsx
+│       ├── api.ts                          # Cliente HTTP (VITE_API_URL)
+│       └── App.tsx                         # Rotas /, /admin, …/modelo
+├── data/                                    # CSVs + políticas_da_loja.pdf
 ├── prompts/
-│   ├── system_prompt_v1.0.0.md             # Versão inicial (legado)
-│   ├── system_prompt_v2.0.0.md … v2.1.2.md # Playbook de condução (ativa: v2.1.2)
-│   └── rag_chunks_definition.md            # Definição documentada dos 14 chunks RAG
+│   ├── system_prompt_v2.1.2.md             # Versão ativa (seed)
+│   ├── system_prompt_v*.md                 # Histórico de versões
+│   └── rag_chunks_definition.md            # Curadoria dos 14 chunks
+├── examples/                                # 5 conversas de demonstração
 ├── scripts/
-│   ├── mcp-postgrest.cjs                   # Wrapper do MCP (lê .env e inicia o servidor PostgREST)
-│   └── seed_rag.py                         # Gera embeddings e popula agent_prompts + rag_chunks
-├── supabase/
-│   ├── config.toml
-│   └── migrations/
-│       ├── 20250901220000_initial_schema.sql      # Tabelas de e-commerce
-│       ├── 20250901230000_chat_agent_tables.sql   # Tabelas do agente
-│       └── 20250902233900_rag_and_prompts.sql     # Tabelas agent_prompts, rag_chunks, rag_query_log
-├── .cursor/
-│   └── mcp.json                            # Config do MCP Supabase (nível do projeto)
-├── .env                                    # Credenciais locais (não versionado)
-├── .env.example                            # Modelo de credenciais (Supabase + OpenAI)
-├── requirements.txt                        # Dependências Python (httpx, fastapi, uvicorn)
+│   ├── seed_rag.py                         # Popula prompts + embeddings
+│   ├── validate_agent_round.py             # Smoke de validação RAG+DB
+│   └── mcp-postgrest.cjs                   # MCP Cursor → PostgREST
+├── supabase/migrations/
+│   ├── 20250901220000_initial_schema.sql
+│   ├── 20250901230000_chat_agent_tables.sql
+│   ├── 20250902233900_rag_and_prompts.sql
+│   └── 20250903004500_remove_knowledge_sources.sql
+├── Procfile / render.yaml / runtime.txt    # Deploy API (Render, Python 3.12)
+├── .env.example                            # SUPABASE_*, OPENAI_*, LLM_MODEL, FRONTEND_ORIGIN
+├── requirements.txt
 └── README.md
 ```
+
+### Organização do código (camadas)
+
+| Camada | Pasta | Responsabilidade |
+|--------|-------|------------------|
+| Orquestração | `agent/chat.py` | Intent, contexto, montagem de mensagens, limpeza da resposta |
+| Integrações | `agent/database.py`, `llm.py`, `rag.py`, `embeddings.py` | I/O externo isolado |
+| Config runtime | `agent/config.py`, `runtime_settings.py` | Env + modelo escolhido no admin |
+| Transporte | `api/` | HTTP fino; regras de negócio ficam no `agent/` |
+| UI | `frontend/src` | Chat cliente vs painel admin em rotas separadas |
 
 ---
 
@@ -669,7 +798,8 @@ O wrapper `scripts/mcp-postgrest.cjs` lê o `.env` e inicia `@supabase/mcp-serve
 
 ### Pré-requisitos
 
-- Python 3.11+
+- Python **3.12** (pin em `runtime.txt`; 3.11+ costuma funcionar localmente)
+- Node.js 18+ (frontend)
 - Conta no [Supabase](https://supabase.com) com o projeto criado e as migrations aplicadas
 - Chave de API da [OpenAI](https://platform.openai.com)
 
@@ -693,9 +823,12 @@ Edite o `.env` com suas credenciais:
 SUPABASE_REST_URL=https://<projeto>.supabase.co/rest/v1
 SUPABASE_KEY=<service_role_secret>
 OPENAI_API_KEY=sk-...
+LLM_MODEL=gpt-4o
+FRONTEND_ORIGIN=*
 ```
 
-> **SUPABASE_KEY:** use a `service_role` secret (Project Settings → API → Project API Keys). Nunca a `anon public`.
+> **SUPABASE_KEY:** use a `service_role` secret (Project Settings → API → Project API Keys). Nunca a `anon public`.  
+> **LLM_MODEL:** padrão `gpt-4o`. Também pode ser alterado em **Admin → Modelo IA** (persiste em `agent_prompts` / `runtime_settings`).
 
 ### 3. Popule o banco com os dados de RAG e prompts
 
@@ -709,6 +842,12 @@ Este script:
 - Insere/ativa o `system_prompt` da versão definida em `scripts/seed_rag.py` (hoje **v2.1.2**)
 
 > **Os dados de e-commerce** (produtos, clientes, pedidos) já foram importados dos CSVs para o Supabase e estão no banco. Nenhuma ação adicional é necessária.
+
+Opcional — validar uma rodada do agente (RAG + DB):
+
+```bash
+python scripts/validate_agent_round.py
+```
 
 ### 4. Rode a API e o frontend
 
@@ -724,6 +863,7 @@ python -m uvicorn api.main:app --reload --port 8000
 
 ```bash
 cd frontend
+cp .env.example .env   # VITE_API_URL=http://localhost:8000
 npm install
 npm run dev
 ```
@@ -734,6 +874,7 @@ npm run dev
 | http://localhost:5173/admin | Conversas (visão empresa) + avaliação 👍/👎 |
 | http://localhost:5173/admin/dashboard | Dashboard de métricas |
 | http://localhost:5173/admin/promocoes | Ativar/desativar promoções (`promotions.is_active`) |
+| http://localhost:5173/admin/modelo | Selecionar modelo OpenAI (`gpt-4o` padrão) |
 | http://localhost:8000/docs | Swagger da API |
 
 No chat do cliente, o ícone de engrenagem abre o painel admin. O campo de WhatsApp no header identifica o cliente na base e personaliza o atendimento pelo nome.
@@ -791,7 +932,8 @@ Browser → Vercel (frontend Vite/React)
 | `SUPABASE_REST_URL` | `https://<projeto>.supabase.co/rest/v1` |
 | `SUPABASE_KEY` | `service_role` secret |
 | `OPENAI_API_KEY` | chave OpenAI |
-| `FRONTEND_ORIGIN` | URL da Vercel (ex. `https://seu-app.vercel.app`) — ou `*` no início |
+| `LLM_MODEL` | `gpt-4o` (opcional; admin também altera) |
+| `FRONTEND_ORIGIN` | URL da Vercel (ex. `https://emporio-five.vercel.app`) — ou `*` no início |
 
 5. Após o deploy, teste: `https://<seu-servico>.onrender.com/health`
 
@@ -813,7 +955,7 @@ Opcional: use o blueprint [`render.yaml`](render.yaml) (New → Blueprint).
 |----------|--------|
 | `VITE_API_URL` | URL pública do Render **sem** barra no final (ex. `https://emporio-musica-api.onrender.com`) |
 
-4. Deploy. O [`frontend/vercel.json`](frontend/vercel.json) faz rewrite SPA para o React Router (`/admin`, `/admin/promocoes`, etc.).
+4. Deploy. O [`frontend/vercel.json`](frontend/vercel.json) faz rewrite SPA para o React Router (`/admin`, `/admin/promocoes`, `/admin/modelo`, etc.).
 
 5. Atualize no Render a variável `FRONTEND_ORIGIN` com a URL final da Vercel e faça redeploy da API (se não estiver usando `*`).
 
@@ -822,11 +964,12 @@ Opcional: use o blueprint [`render.yaml`](render.yaml) (New → Blueprint).
 1. `GET /health` na API → `{"status":"ok",...}`
 2. Abrir o site na Vercel → enviar “oi” no chat
 3. Admin → Promoções → ativar/desativar um item
-4. Perguntar o preço de um produto em promoção e conferir o de/por
+4. Admin → Modelo IA → confirmar `gpt-4o` (ou trocar e testar uma mensagem)
+5. Perguntar o preço de um produto em promoção e conferir o de/por
 
 ### Variáveis locais (desenvolvimento)
 
-- Raiz: copie [`.env.example`](.env.example) → `.env` (Supabase + OpenAI + `FRONTEND_ORIGIN`)
+- Raiz: copie [`.env.example`](.env.example) → `.env` (Supabase + OpenAI + `LLM_MODEL` + `FRONTEND_ORIGIN`)
 - Front: copie [`frontend/.env.example`](frontend/.env.example) → `frontend/.env` com `VITE_API_URL=http://localhost:8000`
 
 ---
@@ -855,7 +998,7 @@ A pasta `examples/` contém 5 conversas reais geradas com o agente em funcioname
 | **RAG com apenas 14 chunks fixos** | Novos documentos exigem curadoria manual | Pipeline automático com Docling (OCR) + chunker semântico para escalar |
 | **Busca de produto sem acento nativo** | Contorna com mapeamento em Python; ideal seria extensão `unaccent` no PostgreSQL | Habilitar extensão `unaccent` via migration e usar `ilike` nos dados normalizados |
 | **Sem memória de longo prazo entre sessões** | Agente não "lembra" preferências de sessões anteriores do mesmo cliente | Salvar preferências do cliente em `customers.metadata` e carregar na próxima sessão |
-| **Apenas 1 provedor LLM (OpenAI)** | Dependência de um único fornecedor | Abstrair o LLM para suportar Anthropic/Gemini como fallback |
+| **Apenas 1 provedor LLM (OpenAI)** | Dependência de um único fornecedor (modelo trocável no admin) | Abstrair o LLM para suporte Anthropic/Gemini como fallback |
 | **Modelo de avaliação reativo** | Rating só coletado depois da resposta, por humano no admin | Sistema automático de avaliação usando LLM como juiz (LLM-as-a-judge) |
 | **Latência da OpenAI variável** | Em alguns momentos a chamada LLM pode demorar dezenas de segundos | Cache de prompt, streaming e monitoramento de rede |
 
@@ -905,7 +1048,8 @@ Exemplo concreto: o assistente inicialmente sugeriu usar Docling para OCR do PDF
 - [x] Painel admin de conversas + avaliação de acurácia
 - [x] Dashboard de métricas
 - [x] Admin de promoções (ativar/desativar `is_active` e refletir preço no chat)
-- [x] Preparado para deploy (Vercel front + Render API)
+- [x] Admin de modelo IA (`gpt-4o` padrão; persistido em `runtime_settings`)
+- [x] Deploy em produção (Vercel front + Render API) — demo: https://emporio-five.vercel.app/
 
 ## API REST (FastAPI)
 
@@ -933,6 +1077,8 @@ Docs interativas: http://localhost:8000/docs
 | `GET` | `/admin/metrics` | Métricas agregadas do dashboard |
 | `GET` | `/admin/promotions` | Lista promoções com preço original/descontado |
 | `PATCH` | `/admin/promotions/{id}` | Ativa/desativa promoção (`{"is_active": true}`) |
+| `GET` | `/admin/settings` | Modelo LLM ativo + lista de opções |
+| `PATCH` | `/admin/settings` | Atualiza modelo (`{"llm_model": "gpt-4o"}`) |
 | `PATCH` | `/admin/messages/{id}/rating` | Avalia resposta (`positive` / `negative` / `neutral`) |
 
 ### Avaliação de acurácia
@@ -943,6 +1089,10 @@ Isso grava `chat_messages.rating` e alimenta o gráfico de acurácia em **Admin 
 ### Promoções
 
 Em **Admin → Promoções**, o dono da loja ativa ou desativa descontos. O agente consulta `v_products_with_active_promotion` e apresenta o preço promocional (de/por) quando `is_active = true`.
+
+### Modelo de IA
+
+Em **Admin → Modelo IA**, a equipe escolhe o modelo OpenAI. O valor fica em `agent_prompts` (`name = runtime_settings`) e vale para as próximas mensagens sem redeploy.
 
 ### Exemplo rápido
 
