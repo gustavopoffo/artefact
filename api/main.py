@@ -12,6 +12,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
 from agent import Agent
+from agent.config import config
 from agent.database import db
 
 from .schemas import (
@@ -21,11 +22,15 @@ from .schemas import (
     ChatResponse,
     CreateSessionRequest,
     HealthResponse,
+    IdentifyRequest,
+    IdentifyResponse,
     MessageHistoryResponse,
     MessageItem,
+    PromotionItem,
     RateMessageRequest,
     RateMessageResponse,
     SessionResponse,
+    TogglePromotionRequest,
 )
 
 app = FastAPI(
@@ -37,10 +42,18 @@ app = FastAPI(
     version="1.0.0",
 )
 
+_origins = [o.strip() for o in config.frontend_origin.split(",") if o.strip()]
+if not _origins or _origins == ["*"]:
+    _cors_origins = ["*"]
+    _cors_credentials = False  # incompatível com allow_origins=["*"]
+else:
+    _cors_origins = _origins
+    _cors_credentials = True
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
+    allow_origins=_cors_origins,
+    allow_credentials=_cors_credentials,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -106,6 +119,52 @@ def end_session(session_id: str) -> SessionResponse:
         customer_id=updated.get("customer_id"),
         started_at=updated.get("started_at"),
         ended_at=updated.get("ended_at"),
+    )
+
+
+@app.post(
+    "/sessions/{session_id}/identify",
+    response_model=IdentifyResponse,
+    tags=["sessions"],
+)
+def identify_customer(session_id: str, body: IdentifyRequest) -> IdentifyResponse:
+    """
+    Identifica o cliente pelo telefone e vincula à sessão.
+    Usado pelo campo opcional do header no chat web.
+    """
+    session = db.get_session(session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Sessao nao encontrada")
+
+    if session.get("status") == "ended":
+        raise HTTPException(status_code=400, detail="Sessao ja encerrada")
+
+    normalized = db.normalize_phone(body.phone)
+    if not normalized:
+        raise HTTPException(
+            status_code=400,
+            detail="Telefone invalido. Use DDD + numero (ex: 67 99812-3456).",
+        )
+
+    customer = db.find_customer_by_phone(normalized)
+    if not customer:
+        return IdentifyResponse(
+            session_id=session_id,
+            identified=False,
+            phone_normalized=normalized,
+            message="Nao encontramos esse numero no cadastro. Pode continuar normalmente.",
+        )
+
+    db.link_customer_to_session(session_id, customer["customer_id"])
+    first_name = (customer.get("name") or "").split()[0] or customer.get("name")
+
+    return IdentifyResponse(
+        session_id=session_id,
+        identified=True,
+        customer_id=customer["customer_id"],
+        customer_name=customer.get("name"),
+        phone_normalized=normalized,
+        message=f"Ola, {first_name}! Cadastro localizado.",
     )
 
 
@@ -242,3 +301,23 @@ def get_metrics() -> AdminMetrics:
     """Retorna métricas agregadas para o dashboard."""
     metrics = db.get_admin_metrics()
     return AdminMetrics(**metrics)
+
+
+@app.get("/admin/promotions", response_model=list[PromotionItem], tags=["admin"])
+def list_promotions() -> list[PromotionItem]:
+    """Lista promoções com preço original e preço com desconto."""
+    rows = db.list_promotions()
+    return [PromotionItem(**row) for row in rows]
+
+
+@app.patch(
+    "/admin/promotions/{promotion_id}",
+    response_model=PromotionItem,
+    tags=["admin"],
+)
+def toggle_promotion(promotion_id: int, body: TogglePromotionRequest) -> PromotionItem:
+    """Ativa ou desativa uma promoção (is_active). O agente passa a usar o preço correspondente."""
+    updated = db.set_promotion_active(promotion_id, body.is_active)
+    if not updated:
+        raise HTTPException(status_code=404, detail="Promocao nao encontrada")
+    return PromotionItem(**updated)

@@ -1,0 +1,20 @@
+# Render Blueprint (opcional) — ou configure o Web Service manualmente no dashboard.
+# https://render.com/docs/blueprint-spec
+
+services:
+  - type: web
+    name: emporio-musica-api
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn api.main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /health
+    envVars:
+      - key: SUPABASE_REST_URL
+        sync: false
+      - key: SUPABASE_KEY
+        sync: false
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: FRONTEND_ORIGIN
+        sync: false

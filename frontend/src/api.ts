@@ -1,4 +1,6 @@
-const API_BASE = 'http://localhost:8000';
+export const API_BASE =
+  (import.meta.env.VITE_API_URL as string | undefined)?.replace(/\/$/, '') ||
+  'http://localhost:8000';
 
 export interface Session {
   session_id: string;
@@ -27,6 +29,15 @@ export interface ChatResponse {
   rag_chunks_used: number;
   customer_identified: boolean;
   sources_consulted: Record<string, unknown>;
+}
+
+export interface IdentifyResponse {
+  session_id: string;
+  identified: boolean;
+  customer_id: number | null;
+  customer_name: string | null;
+  phone_normalized: string | null;
+  message: string;
 }
 
 export interface SessionSummary {
@@ -86,6 +97,19 @@ export async function sendMessage(sessionId: string, message: string): Promise<C
   return res.json();
 }
 
+export async function identifyByPhone(sessionId: string, phone: string): Promise<IdentifyResponse> {
+  const res = await fetch(`${API_BASE}/sessions/${sessionId}/identify`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ phone }),
+  });
+  if (!res.ok) {
+    const error = await res.json().catch(() => ({}));
+    throw new Error(error.detail || 'Falha ao identificar cliente');
+  }
+  return res.json();
+}
+
 export async function getMessages(sessionId: string, limit: number = 50): Promise<{ session_id: string; messages: Message[] }> {
   const res = await fetch(`${API_BASE}/sessions/${sessionId}/messages?limit=${limit}`);
   if (!res.ok) throw new Error('Falha ao buscar mensagens');
@@ -105,5 +129,53 @@ export async function listSessions(): Promise<SessionSummary[]> {
 export async function getMetrics(): Promise<Record<string, unknown>> {
   const res = await fetch(`${API_BASE}/admin/metrics`);
   if (!res.ok) return {};
+  return res.json();
+}
+
+export interface Promotion {
+  promotion_id: number;
+  product_id: number;
+  product_name: string;
+  product_status: string | null;
+  original_price: number;
+  discount_percent: number;
+  discounted_price: number;
+  description: string;
+  is_active: boolean;
+}
+
+export async function listPromotions(): Promise<Promotion[]> {
+  const res = await fetch(`${API_BASE}/admin/promotions`);
+  if (!res.ok) throw new Error('Falha ao listar promoções');
+  return res.json();
+}
+
+export async function togglePromotion(promotionId: number, isActive: boolean): Promise<Promotion> {
+  const res = await fetch(`${API_BASE}/admin/promotions/${promotionId}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ is_active: isActive }),
+  });
+  if (!res.ok) {
+    const error = await res.json().catch(() => ({}));
+    throw new Error(error.detail || 'Falha ao atualizar promoção');
+  }
+  return res.json();
+}
+
+export async function rateMessage(
+  messageId: string,
+  rating: 'positive' | 'negative' | 'neutral',
+  feedback?: string,
+): Promise<{ message_id: string; rating: string }> {
+  const res = await fetch(`${API_BASE}/admin/messages/${messageId}/rating`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ rating, feedback: feedback ?? null }),
+  });
+  if (!res.ok) {
+    const error = await res.json().catch(() => ({}));
+    throw new Error(error.detail || 'Falha ao avaliar mensagem');
+  }
   return res.json();
 }

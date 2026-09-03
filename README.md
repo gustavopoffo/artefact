@@ -46,11 +46,12 @@ Sistema completo de **agente conversacional com IA** para atendimento a clientes
 | Funcionalidade | Fonte de Dados | Exemplo de Pergunta |
 |----------------|----------------|---------------------|
 | Consulta de estoque | `products.stock_quantity` | "Tem guitarra Fender disponível?" |
-| Preços e promoções | `products`, `promotions` | "Qual o preço do ukulele Kala?" |
+| Preços e promoções | `products`, `promotions` (`is_active`) | "Qual o preço do ukulele Kala?" |
 | Status de pedido | `orders`, `order_items` | "Onde está meu pedido #15?" |
-| Cadastro de cliente | `customers` | "Meu email está cadastrado?" |
+| Identificação do cliente | `customers` + campo WhatsApp no chat | Telefone/e-mail no header ou na mensagem |
 | Políticas da loja | `rag_chunks` (RAG) | "Qual o prazo de devolução?" |
 | Formas de pagamento | Políticas + ENUMs | "Vocês parcelam em quantas vezes?" |
+| Horário de atendimento | Relógio local (Campo Grande) + prompt | Avisa retorno se fora do expediente |
 
 ---
 
@@ -466,7 +467,7 @@ Este diagrama mostra exatamente o que acontece em cada etapa de uma conversa, qu
                                      ▼
    ┌──────────────────────────────────────────────────────────────────────────┐
    │ SELECT content FROM v_active_prompt WHERE name = 'system_prompt'         │
-   │ → Carrega o prompt ativo (v1.0.0, ~1243 tokens)                          │
+   │ → Carrega o prompt ativo (ex.: v2.1.2 — playbook de condução)            │
    └──────────────────────────────────────────────────────────────────────────┘
 
 2. CLIENTE ENVIA MENSAGEM ("Vocês têm violão Yamaha?")
@@ -504,7 +505,11 @@ Este diagrama mostra exatamente o que acontece em cada etapa de uma conversa, qu
    │                       MONTAGEM DO PROMPT FINAL                           │
    │                                                                          │
    │  ┌─────────────────────────────────────────────────────────────────┐     │
-   │  │ SYSTEM PROMPT (v1.0.0) ─ identidade, horário, diretrizes        │     │
+   │  │ SYSTEM PROMPT (ativo) ─ identidade, workflow, tom, exemplos         │     │
+   │  └─────────────────────────────────────────────────────────────────┘     │
+   │                              +                                           │
+   │  ┌─────────────────────────────────────────────────────────────────┐     │
+   │  │ STATUS DO ATENDIMENTO + DADOS DO SISTEMA (mensagem system extra)  │     │
    │  └─────────────────────────────────────────────────────────────────┘     │
    │                              +                                           │
    │  ┌─────────────────────────────────────────────────────────────────┐     │
@@ -512,7 +517,7 @@ Este diagrama mostra exatamente o que acontece em cada etapa de uma conversa, qu
    │  └─────────────────────────────────────────────────────────────────┘     │
    │                              +                                           │
    │  ┌─────────────────────────────────────────────────────────────────┐     │
-   │  │ DADOS DO BANCO ─ produtos encontrados, estoque, preços          │     │
+   │  │ DADOS DO BANCO ─ produtos, estoque, preços (com promo ativa)    │     │
    │  └─────────────────────────────────────────────────────────────────┘     │
    │                              +                                           │
    │  ┌─────────────────────────────────────────────────────────────────┐     │
@@ -545,15 +550,12 @@ Este diagrama mostra exatamente o que acontece em cada etapa de uma conversa, qu
    │ )                                                                        │
    └──────────────────────────────────────────────────────────────────────────┘
 
-5. IDENTIFICAÇÃO DO CLIENTE (quando informa email/telefone)
+5. IDENTIFICAÇÃO DO CLIENTE (telefone/e-mail no header do chat ou na mensagem)
    ┌──────────────────────────────────────────────────────────────────────────┐
-   │ SELECT customer_id FROM customers WHERE email = 'cliente@email.com'      │
-   │                                                                          │
-   │ Se encontrar → UPDATE chat_sessions SET customer_id = X                  │
-   │                                                                          │
-   │ A partir daqui, agente pode consultar:                                   │
-   │   - v_customer_orders_summary (histórico de compras)                     │
-   │   - v_order_details (detalhes de pedidos específicos)                    │
+   │ POST /sessions/{id}/identify  OU  extração do contato na mensagem        │
+   │ → Busca em customers; vincula customer_id à sessão                       │
+   │ → Agente passa a usar o nome do cliente                                  │
+   │ → Pode consultar v_customer_orders_summary / v_order_details             │
    └──────────────────────────────────────────────────────────────────────────┘
 
 6. AVALIAÇÃO (posterior, por humano ou sistema)
@@ -602,13 +604,14 @@ artefact/
 ├── frontend/                                # Interface React (Vite + Tailwind)
 │   ├── src/
 │   │   ├── components/
-│   │   │   ├── ChatClient.tsx              # Chat estilo WhatsApp (visão cliente)
+│   │   │   ├── ChatClient.tsx              # Chat estilo WhatsApp (+ WhatsApp opcional no header)
 │   │   │   ├── AdminConversations.tsx      # Lista/histórico de conversas + rating
 │   │   │   ├── AdminDashboard.tsx          # Dashboard de métricas
+│   │   │   ├── AdminPromotions.tsx         # Ativar/desativar promoções (is_active)
 │   │   │   └── AdminSidebar.tsx
 │   │   ├── layouts/AdminLayout.tsx
 │   │   ├── api.ts                          # Cliente HTTP da API
-│   │   └── App.tsx                         # Rotas (/ , /admin , /admin/dashboard)
+│   │   └── App.tsx                         # Rotas (/ , /admin , /admin/dashboard, /admin/promocoes)
 │   └── package.json
 ├── data/                                    # CSVs de origem (já importados ao Supabase)
 │   ├── desafio_tecnico_ai_eng - categories.csv
@@ -619,7 +622,8 @@ artefact/
 │   ├── desafio_tecnico_ai_eng - order_items.csv
 │   └── políticas_da_loja.pdf               # Documento fonte do RAG
 ├── prompts/
-│   ├── system_prompt_v1.0.0.md             # Prompt fixo do agente (versão atual)
+│   ├── system_prompt_v1.0.0.md             # Versão inicial (legado)
+│   ├── system_prompt_v2.0.0.md … v2.1.2.md # Playbook de condução (ativa: v2.1.2)
 │   └── rag_chunks_definition.md            # Definição documentada dos 14 chunks RAG
 ├── scripts/
 │   ├── mcp-postgrest.cjs                   # Wrapper do MCP (lê .env e inicia o servidor PostgREST)
@@ -702,7 +706,7 @@ python scripts/seed_rag.py
 Este script:
 - Gera embeddings para os 14 chunks de política da loja via `text-embedding-3-small`
 - Insere os chunks na tabela `rag_chunks` (é idempotente — ignora chunks já existentes)
-- Insere o `system_prompt` v1.0.0 em `agent_prompts`
+- Insere/ativa o `system_prompt` da versão definida em `scripts/seed_rag.py` (hoje **v2.1.2**)
 
 > **Os dados de e-commerce** (produtos, clientes, pedidos) já foram importados dos CSVs para o Supabase e estão no banco. Nenhuma ação adicional é necessária.
 
@@ -711,8 +715,10 @@ Este script:
 **Terminal 1 — API:**
 
 ```bash
-uvicorn api.main:app --reload --port 8000
+python -m uvicorn api.main:app --reload --port 8000
 ```
+
+> No Windows, prefira `python -m uvicorn` — o comando `uvicorn` sozinho pode não estar no PATH.
 
 **Terminal 2 — Frontend:**
 
@@ -724,12 +730,13 @@ npm run dev
 
 | URL | Visão |
 |-----|--------|
-| http://localhost:5173/ | Chat do cliente (estilo WhatsApp) |
+| http://localhost:5173/ | Chat do cliente (estilo WhatsApp) + WhatsApp opcional no header |
 | http://localhost:5173/admin | Conversas (visão empresa) + avaliação 👍/👎 |
 | http://localhost:5173/admin/dashboard | Dashboard de métricas |
+| http://localhost:5173/admin/promocoes | Ativar/desativar promoções (`promotions.is_active`) |
 | http://localhost:8000/docs | Swagger da API |
 
-No chat do cliente, o ícone de engrenagem abre o painel admin.
+No chat do cliente, o ícone de engrenagem abre o painel admin. O campo de WhatsApp no header identifica o cliente na base e personaliza o atendimento pelo nome.
 
 **Via CLI (opcional):**
 
@@ -754,6 +761,76 @@ print(f"Cliente identificado: {response.customer_identified}")
 
 ---
 
+## Deploy (Vercel + Render)
+
+Arquitetura em produção:
+
+```
+Browser → Vercel (frontend Vite/React)
+              │  VITE_API_URL
+              ▼
+         Render (FastAPI / uvicorn)
+              ├── Supabase (PostgREST)
+              └── OpenAI (embeddings + chat)
+```
+
+### 1. API no Render
+
+1. Conta em [render.com](https://render.com) → **New → Web Service**
+2. Conecte o repositório GitHub (`gustavopoffo/artefact`)
+3. Configuração sugerida:
+   - **Root Directory:** (raiz do repo)
+   - **Runtime:** Python 3
+   - **Build Command:** `pip install -r requirements.txt`
+   - **Start Command:** `uvicorn api.main:app --host 0.0.0.0 --port $PORT`
+   - **Health Check Path:** `/health`
+4. Variáveis de ambiente (Environment):
+
+| Variável | Valor |
+|----------|--------|
+| `SUPABASE_REST_URL` | `https://<projeto>.supabase.co/rest/v1` |
+| `SUPABASE_KEY` | `service_role` secret |
+| `OPENAI_API_KEY` | chave OpenAI |
+| `FRONTEND_ORIGIN` | URL da Vercel (ex. `https://seu-app.vercel.app`) — ou `*` no início |
+
+5. Após o deploy, teste: `https://<seu-servico>.onrender.com/health`
+
+> **Cold start:** no plano free o serviço “dorme” após inatividade. A primeira request pode demorar ~30–60s. Chamadas ao chat já usam timeout de 60s na OpenAI.
+
+Opcional: use o blueprint [`render.yaml`](render.yaml) (New → Blueprint).
+
+### 2. Frontend na Vercel
+
+1. Conta em [vercel.com](https://vercel.com) → **Add New Project** → importe o mesmo repo
+2. Configuração:
+   - **Root Directory:** `frontend`
+   - **Framework Preset:** Vite
+   - **Build Command:** `npm run build` (padrão)
+   - **Output Directory:** `dist` (padrão)
+3. Environment Variable:
+
+| Variável | Valor |
+|----------|--------|
+| `VITE_API_URL` | URL pública do Render **sem** barra no final (ex. `https://emporio-musica-api.onrender.com`) |
+
+4. Deploy. O [`frontend/vercel.json`](frontend/vercel.json) faz rewrite SPA para o React Router (`/admin`, `/admin/promocoes`, etc.).
+
+5. Atualize no Render a variável `FRONTEND_ORIGIN` com a URL final da Vercel e faça redeploy da API (se não estiver usando `*`).
+
+### 3. Smoke test em produção
+
+1. `GET /health` na API → `{"status":"ok",...}`
+2. Abrir o site na Vercel → enviar “oi” no chat
+3. Admin → Promoções → ativar/desativar um item
+4. Perguntar o preço de um produto em promoção e conferir o de/por
+
+### Variáveis locais (desenvolvimento)
+
+- Raiz: copie [`.env.example`](.env.example) → `.env` (Supabase + OpenAI + `FRONTEND_ORIGIN`)
+- Front: copie [`frontend/.env.example`](frontend/.env.example) → `frontend/.env` com `VITE_API_URL=http://localhost:8000`
+
+---
+
 ## Exemplos de Interação
 
 A pasta `examples/` contém 5 conversas reais geradas com o agente em funcionamento, cobrindo os principais cenários:
@@ -774,12 +851,13 @@ A pasta `examples/` contém 5 conversas reais geradas com o agente em funcioname
 
 | Limitação | Impacto | O que faria com mais tempo |
 |-----------|---------|---------------------------|
-| **Identificação de cliente por email/telefone explícito** | O cliente precisa digitar o contato — sem login/auth | Integrar com WhatsApp Business API ou sistema de autenticação |
+| **Identificação de cliente por telefone/e-mail** | Campo no header do chat + texto na mensagem; sem login | Integrar com WhatsApp Business API ou sistema de autenticação |
 | **RAG com apenas 14 chunks fixos** | Novos documentos exigem curadoria manual | Pipeline automático com Docling (OCR) + chunker semântico para escalar |
 | **Busca de produto sem acento nativo** | Contorna com mapeamento em Python; ideal seria extensão `unaccent` no PostgreSQL | Habilitar extensão `unaccent` via migration e usar `ilike` nos dados normalizados |
 | **Sem memória de longo prazo entre sessões** | Agente não "lembra" preferências de sessões anteriores do mesmo cliente | Salvar preferências do cliente em `customers.metadata` e carregar na próxima sessão |
 | **Apenas 1 provedor LLM (OpenAI)** | Dependência de um único fornecedor | Abstrair o LLM para suportar Anthropic/Gemini como fallback |
 | **Modelo de avaliação reativo** | Rating só coletado depois da resposta, por humano no admin | Sistema automático de avaliação usando LLM como juiz (LLM-as-a-judge) |
+| **Latência da OpenAI variável** | Em alguns momentos a chamada LLM pode demorar dezenas de segundos | Cache de prompt, streaming e monitoramento de rede |
 
 ### O que faria com mais tempo
 
@@ -818,14 +896,16 @@ Exemplo concreto: o assistente inicialmente sugeriu usar Docling para OCR do PDF
 - [x] Migrations aplicadas no Supabase
 - [x] Dados dos CSVs importados (categories, customers, products, promotions, orders, order_items)
 - [x] Estrutura RAG criada (`agent_prompts`, `rag_chunks`, `rag_query_log`, função `match_chunks`)
-- [x] System prompt v1.0.0 e 14 chunks de política definidos e documentados
+- [x] System prompt versionado (ativa: **v2.1.2** — playbook de condução) e 14 chunks de política
 - [x] Embeddings gerados e dados populados via `seed_rag.py`
 - [x] Lógica do agente implementada (`agent/`)
 - [x] Exemplos de interação documentados em `examples/`
 - [x] Endpoint REST (FastAPI)
-- [x] Frontend de chat (visão cliente)
+- [x] Frontend de chat (visão cliente) + identificação por WhatsApp no header
 - [x] Painel admin de conversas + avaliação de acurácia
 - [x] Dashboard de métricas
+- [x] Admin de promoções (ativar/desativar `is_active` e refletir preço no chat)
+- [x] Preparado para deploy (Vercel front + Render API)
 
 ## API REST (FastAPI)
 
@@ -833,7 +913,7 @@ Exemplo concreto: o assistente inicialmente sugeriu usar Docling para OCR do PDF
 
 ```bash
 pip install -r requirements.txt
-uvicorn api.main:app --reload --port 8000
+python -m uvicorn api.main:app --reload --port 8000
 ```
 
 Docs interativas: http://localhost:8000/docs
@@ -846,16 +926,23 @@ Docs interativas: http://localhost:8000/docs
 | `POST` | `/sessions` | Cria sessão (`{"channel": "web"}`) |
 | `GET` | `/sessions/{id}` | Dados da sessão |
 | `POST` | `/sessions/{id}/end` | Encerra sessão |
+| `POST` | `/sessions/{id}/identify` | Identifica cliente por telefone e vincula à sessão |
 | `POST` | `/sessions/{id}/messages` | Envia mensagem e recebe resposta do agente |
 | `GET` | `/sessions/{id}/messages` | Histórico da conversa |
 | `GET` | `/admin/sessions` | Lista sessões com resumo (contagem, última msg) |
 | `GET` | `/admin/metrics` | Métricas agregadas do dashboard |
+| `GET` | `/admin/promotions` | Lista promoções com preço original/descontado |
+| `PATCH` | `/admin/promotions/{id}` | Ativa/desativa promoção (`{"is_active": true}`) |
 | `PATCH` | `/admin/messages/{id}/rating` | Avalia resposta (`positive` / `negative` / `neutral`) |
 
 ### Avaliação de acurácia
 
 No painel **Admin → Conversas**, cada resposta do agente tem botões 👍 / 👎.  
 Isso grava `chat_messages.rating` e alimenta o gráfico de acurácia em **Admin → Dashboard**.
+
+### Promoções
+
+Em **Admin → Promoções**, o dono da loja ativa ou desativa descontos. O agente consulta `v_products_with_active_promotion` e apresenta o preço promocional (de/por) quando `is_active = true`.
 
 ### Exemplo rápido
 

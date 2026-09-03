@@ -7,6 +7,7 @@ import {
   LineChart, Line, BarChart, Bar, PieChart, Pie, Cell,
   XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer
 } from 'recharts';
+import { API_BASE } from '../api';
 
 interface DashboardMetrics {
   total_sessions: number;
@@ -37,7 +38,7 @@ export default function AdminDashboard() {
   async function loadMetrics() {
     setLoading(true);
     try {
-      const res = await fetch('http://localhost:8000/admin/metrics');
+      const res = await fetch(`${API_BASE}/admin/metrics`);
       if (res.ok) {
         const data = await res.json();
         setMetrics(data);
