@@ -448,6 +448,159 @@ O documento `data/políticas_da_loja.pdf` (8 páginas, 10 seções) contém as r
 
 ---
 
+## Fluxo de Execução do Agente (Ponta a Ponta)
+
+Este diagrama mostra exatamente o que acontece em cada etapa de uma conversa, quais tabelas são lidas e escritas, e como os dados fluem pelo sistema.
+
+### Mapa de Tabelas por Domínio
+
+| Domínio | Tabela | Propósito | Agente Lê | Agente Escreve |
+|---------|--------|-----------|-----------|----------------|
+| E-commerce | `products` | Instrumentos à venda | ✓ | - |
+| E-commerce | `categories` | Tipos de instrumento | ✓ | - |
+| E-commerce | `promotions` | Descontos ativos | ✓ | - |
+| E-commerce | `customers` | Clientes cadastrados | ✓ | - |
+| E-commerce | `orders` | Pedidos | ✓ | - |
+| E-commerce | `order_items` | Itens dos pedidos | ✓ | - |
+| Agente | `chat_sessions` | Sessões de conversa | ✓ | ✓ |
+| Agente | `chat_messages` | Mensagens user/assistant | ✓ | ✓ |
+| Agente | `agent_prompts` | Prompts versionados | ✓ | métricas |
+| RAG | `rag_chunks` | Chunks com embedding | `match_chunks()` | - |
+| RAG | `rag_query_log` | Log de buscas | - | ✓ |
+
+### Diagrama do Fluxo
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                          FLUXO DE UMA CONVERSA                              │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+1. INÍCIO DA SESSÃO
+   ┌──────────────────────────────────────────────────────────────────────────┐
+   │ INSERT INTO chat_sessions (channel, status, metadata)                    │
+   │ → session_id = UUID gerado                                               │
+   │ → customer_id = NULL (cliente ainda não identificado)                    │
+   └──────────────────────────────────────────────────────────────────────────┘
+                                     │
+                                     ▼
+   ┌──────────────────────────────────────────────────────────────────────────┐
+   │ SELECT content FROM v_active_prompt WHERE name = 'system_prompt'         │
+   │ → Carrega o prompt ativo (v1.0.0, ~1243 tokens)                          │
+   └──────────────────────────────────────────────────────────────────────────┘
+
+2. CLIENTE ENVIA MENSAGEM ("Vocês têm violão Yamaha?")
+   ┌──────────────────────────────────────────────────────────────────────────┐
+   │ INSERT INTO chat_messages (session_id, role='user', content)             │
+   └──────────────────────────────────────────────────────────────────────────┘
+
+3. AGENTE PROCESSA (em paralelo)
+   ┌──────────────────────┐                         ┌──────────────────────┐
+   │ EMBEDDING DA QUERY   │                         │ CONSULTA AO BANCO    │
+   │ OpenAI API           │                         │ SELECT * FROM        │
+   │ text-embedding-3     │                         │ products WHERE name  │
+   │ → vetor 1536 dims    │                         │ ILIKE '%yamaha%'     │
+   └──────────────────────┘                         └──────────────────────┘
+            │                                                  │
+            ▼                                                  │
+   ┌──────────────────────┐                                    │
+   │ SELECT * FROM        │                                    │
+   │ match_chunks(        │                                    │
+   │   embedding,         │  ← Se pergunta for sobre           │
+   │   match_count=3,     │    "troca", "frete", "pagamento"   │
+   │   threshold=0.5      │    → retorna chunks relevantes     │
+   │ )                    │                                    │
+   └──────────────────────┘                                    │
+            │                                                  │
+            ▼                                                  │
+   ┌──────────────────────────────────────────────────────────────────────────┐
+   │ INSERT INTO rag_query_log (query_text, chunks_returned, similarity...)  │
+   └──────────────────────────────────────────────────────────────────────────┘
+            │                                                  │
+            └──────────────────────┬───────────────────────────┘
+                                   │
+                                   ▼
+   ┌──────────────────────────────────────────────────────────────────────────┐
+   │                       MONTAGEM DO PROMPT FINAL                           │
+   │                                                                          │
+   │  ┌─────────────────────────────────────────────────────────────────┐     │
+   │  │ SYSTEM PROMPT (v1.0.0) ─ identidade, horário, diretrizes        │     │
+   │  └─────────────────────────────────────────────────────────────────┘     │
+   │                              +                                           │
+   │  ┌─────────────────────────────────────────────────────────────────┐     │
+   │  │ CONTEXTO RAG (se houver match) ─ chunks de política             │     │
+   │  └─────────────────────────────────────────────────────────────────┘     │
+   │                              +                                           │
+   │  ┌─────────────────────────────────────────────────────────────────┐     │
+   │  │ DADOS DO BANCO ─ produtos encontrados, estoque, preços          │     │
+   │  └─────────────────────────────────────────────────────────────────┘     │
+   │                              +                                           │
+   │  ┌─────────────────────────────────────────────────────────────────┐     │
+   │  │ HISTÓRICO ─ mensagens anteriores desta sessão                   │     │
+   │  └─────────────────────────────────────────────────────────────────┘     │
+   │                              +                                           │
+   │  ┌─────────────────────────────────────────────────────────────────┐     │
+   │  │ MENSAGEM DO CLIENTE ─ "Vocês têm violão Yamaha?"                │     │
+   │  └─────────────────────────────────────────────────────────────────┘     │
+   └──────────────────────────────────────────────────────────────────────────┘
+                                   │
+                                   ▼
+                        ┌──────────────────┐
+                        │     LLM API      │
+                        │   (GPT-4, etc)   │
+                        └──────────────────┘
+                                   │
+                                   ▼
+4. AGENTE RESPONDE
+   ┌──────────────────────────────────────────────────────────────────────────┐
+   │ INSERT INTO chat_messages (                                              │
+   │   session_id,                                                            │
+   │   role = 'assistant',                                                    │
+   │   content = "Temos 14 unidades do Yamaha F310 por R$ 699,90...",        │
+   │   model_used = 'gpt-4',                                                  │
+   │   tokens_input = 1850,                                                   │
+   │   tokens_output = 120,                                                   │
+   │   response_time_ms = 2340,                                               │
+   │   sources_consulted = '{"tables": ["products"], "chunks": []}'           │
+   │ )                                                                        │
+   └──────────────────────────────────────────────────────────────────────────┘
+
+5. IDENTIFICAÇÃO DO CLIENTE (quando informa email/telefone)
+   ┌──────────────────────────────────────────────────────────────────────────┐
+   │ SELECT customer_id FROM customers WHERE email = 'cliente@email.com'      │
+   │                                                                          │
+   │ Se encontrar → UPDATE chat_sessions SET customer_id = X                  │
+   │                                                                          │
+   │ A partir daqui, agente pode consultar:                                   │
+   │   - v_customer_orders_summary (histórico de compras)                     │
+   │   - v_order_details (detalhes de pedidos específicos)                    │
+   └──────────────────────────────────────────────────────────────────────────┘
+
+6. AVALIAÇÃO (posterior, por humano ou sistema)
+   ┌──────────────────────────────────────────────────────────────────────────┐
+   │ UPDATE chat_messages SET rating='positive', rating_feedback='...'        │
+   │ UPDATE agent_prompts SET times_used = times_used + 1                     │
+   └──────────────────────────────────────────────────────────────────────────┘
+
+7. ENCERRAMENTO
+   ┌──────────────────────────────────────────────────────────────────────────┐
+   │ UPDATE chat_sessions SET status='ended', ended_at=now()                  │
+   └──────────────────────────────────────────────────────────────────────────┘
+```
+
+### Resumo: O que cada etapa ESCREVE
+
+| Etapa | Tabela | Campos Preenchidos |
+|-------|--------|-------------------|
+| Início sessão | `chat_sessions` | session_id, started_at, status, channel |
+| Mensagem user | `chat_messages` | role=user, content, created_at |
+| Busca RAG | `rag_query_log` | query_text, chunks_returned, similarity, search_time_ms |
+| Resposta | `chat_messages` | role=assistant, content, model_used, tokens_*, response_time_ms, sources_consulted |
+| Identificação | `chat_sessions` | customer_id (UPDATE) |
+| Avaliação | `chat_messages` | rating, rating_feedback, rated_at (UPDATE) |
+| Encerramento | `chat_sessions` | status=ended, ended_at (UPDATE) |
+
+---
+
 ## Estrutura do Projeto
 
 ```
@@ -509,7 +662,8 @@ O wrapper `scripts/mcp-postgrest.cjs` lê o `.env` e inicia `@supabase/mcp-serve
 - [x] Dados dos CSVs importados (categories, customers, products, promotions, orders, order_items)
 - [x] Estrutura RAG criada (`agent_prompts`, `rag_chunks`, `rag_query_log`, função `match_chunks`)
 - [x] System prompt v1.0.0 e 14 chunks de política definidos e documentados
-- [ ] Executar `seed_rag.py` para gerar embeddings e popular o Supabase
-- [ ] Implementar endpoint da API do agente
+- [x] Embeddings gerados e dados populados via `seed_rag.py`
+- [ ] Implementar lógica do agente (`feature/agent`)
+- [ ] Criar endpoint da API
 - [ ] Criar frontend de chat
 - [ ] Dashboard de métricas e acompanhamento
