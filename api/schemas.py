@@ -30,6 +30,19 @@ class ChatRequest(BaseModel):
     message: str = Field(..., min_length=1, description="Mensagem do cliente")
 
 
+class IdentifyRequest(BaseModel):
+    phone: str = Field(..., min_length=8, description="Telefone/WhatsApp do cliente")
+
+
+class IdentifyResponse(BaseModel):
+    session_id: str
+    identified: bool
+    customer_id: int | None = None
+    customer_name: str | None = None
+    phone_normalized: str | None = None
+    message: str
+
+
 class ChatResponse(BaseModel):
     session_id: str
     message_id: str
@@ -131,3 +144,19 @@ class AdminMetrics(BaseModel):
     sessions_by_channel: list[ChannelCount] = []
     top_rag_categories: list[CategoryCount] = []
     response_time_trend: list[ResponseTimeTrend] = []
+
+
+class PromotionItem(BaseModel):
+    promotion_id: int
+    product_id: int
+    product_name: str
+    product_status: str | None = None
+    original_price: float
+    discount_percent: float
+    discounted_price: float
+    description: str
+    is_active: bool
+
+
+class TogglePromotionRequest(BaseModel):
+    is_active: bool

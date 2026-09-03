@@ -5,15 +5,113 @@ Agente de chat — orquestra todo o fluxo de conversa.
 import re
 import unicodedata
 from dataclasses import dataclass
+from datetime import datetime, time, timedelta
+from zoneinfo import ZoneInfo
 
 from .database import db
 from .rag import rag
 from .llm import llm
 
+STORE_TZ = ZoneInfo("America/Campo_Grande")
+WEEKDAY_NAMES_PT = (
+    "segunda-feira",
+    "terça-feira",
+    "quarta-feira",
+    "quinta-feira",
+    "sexta-feira",
+    "sábado",
+    "domingo",
+)
+
 
 def _normalize(text: str) -> str:
     """Remove acentos e coloca em minúsculas para comparações robustas."""
     return unicodedata.normalize("NFD", text.lower()).encode("ascii", "ignore").decode("ascii")
+
+
+def _clean_client_text(text: str) -> str:
+    """Remove markdown de negrito/itálico que aparece literal no WhatsApp."""
+    text = re.sub(r"\*\*(.+?)\*\*", r"\1", text)
+    text = re.sub(r"__(.+?)__", r"\1", text)
+    text = re.sub(r"(?<!\w)\*(?!\s)(.+?)(?<!\s)\*(?!\w)", r"\1", text)
+    return text
+
+
+def _store_hours_for_weekday(weekday: int) -> tuple[time, time] | None:
+    """Retorna (abertura, fechamento) ou None se fechado. weekday: seg=0 … dom=6."""
+    if weekday <= 4:  # seg–sex
+        return time(9, 0), time(18, 0)
+    if weekday == 5:  # sábado
+        return time(9, 0), time(13, 0)
+    return None
+
+
+def _next_opening(now: datetime) -> datetime:
+    """Próximo horário de abertura a partir de now (timezone da loja)."""
+    candidate = now
+    for _ in range(8):
+        hours = _store_hours_for_weekday(candidate.weekday())
+        if hours:
+            open_at, _ = hours
+            opening = candidate.replace(
+                hour=open_at.hour, minute=open_at.minute, second=0, microsecond=0
+            )
+            if candidate.date() > now.date() or opening > now:
+                return opening
+        candidate = (candidate + timedelta(days=1)).replace(
+            hour=0, minute=0, second=0, microsecond=0
+        )
+    return now + timedelta(days=1)
+
+
+def format_attendance_status(now: datetime | None = None) -> str:
+    """
+    Bloco de contexto com horário local e se a loja está aberta.
+    O prompt usa isso para avisar fora do expediente.
+    """
+    now = now or datetime.now(STORE_TZ)
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=STORE_TZ)
+    else:
+        now = now.astimezone(STORE_TZ)
+
+    hours = _store_hours_for_weekday(now.weekday())
+    weekday = WEEKDAY_NAMES_PT[now.weekday()]
+    clock = now.strftime("%H:%M")
+    date_str = now.strftime("%d/%m/%Y")
+
+    if hours:
+        open_at, close_at = hours
+        is_open = open_at <= now.time() < close_at
+    else:
+        open_at = close_at = None
+        is_open = False
+
+    lines = [
+        "## STATUS DO ATENDIMENTO\n",
+        f"- **Agora:** {weekday}, {date_str}, {clock} (Campo Grande, MS)",
+        "- **Expediente:** Seg-Sex 09:00-18:00 | Sab 09:00-13:00 | Dom/feriados fechado",
+    ]
+
+    if is_open:
+        lines.append(
+            f"- **Status:** DENTRO DO EXPEDIENTE (abre {open_at.strftime('%H:%M')}, "
+            f"fecha {close_at.strftime('%H:%M')})"
+        )
+        lines.append("- Não é necessário avisar horário de retorno.")
+    else:
+        nxt = _next_opening(now)
+        next_label = WEEKDAY_NAMES_PT[nxt.weekday()]
+        lines.append("- **Status:** FORA DO EXPEDIENTE")
+        lines.append(
+            f"- **Retorno:** {next_label} às {nxt.strftime('%H:%M')}"
+        )
+        lines.append(
+            "- Na primeira resposta da sessão, avise que estão fora do horário "
+            "e informe o retorno. Continue ajudando com informações disponíveis."
+        )
+
+    return "\n".join(lines)
 
 
 @dataclass
@@ -107,7 +205,11 @@ class Agent:
         )
         if phone_match:
             raw = re.sub(r"[^\d]", "", phone_match.group(0))
-            contact["phone"] = f"({raw[:2]}) {raw[2:7]}-{raw[7:]}" if len(raw) == 11 else phone_match.group(0)
+            normalized = db.normalize_phone(raw)
+            if normalized:
+                contact["phone"] = normalized
+            else:
+                contact["phone"] = phone_match.group(0)
 
         return contact
 
@@ -162,8 +264,9 @@ class Agent:
             lines.append("- **Historico:** nenhum pedido registrado")
 
         lines.append(
-            "\nUse o nome do cliente na saudacao. "
-            "Se tiver pedidos, pode referenciar o historico se relevante."
+            "\nUse o nome do cliente na saudacao e ocasionalmente depois. "
+            "Se tiver pedidos, pode referenciar o historico se relevante. "
+            "Nao peca telefone/email de novo — o cadastro ja foi localizado."
         )
 
         return "\n".join(lines)
@@ -310,6 +413,9 @@ class Agent:
         context_parts = []
         sources = {"tables": [], "chunks": [], "rag_metrics": None, "rag_log_id": None}
 
+        # Horário local da loja (sempre — o prompt usa para fora do expediente)
+        context_parts.append(format_attendance_status())
+
         # Contexto do cliente identificado
         if customer:
             context_parts.append(self._format_customer_context(customer))
@@ -346,7 +452,7 @@ class Agent:
 
                 rag_log = db.log_rag_query(
                     query_text=message,
-                    query_embedding=metrics.get("query_embedding", []),
+                    query_embedding=None,
                     chunks_returned=sources["chunks"],
                     top_similarity=metrics.get("top_similarity"),
                     avg_similarity=metrics.get("avg_similarity"),
@@ -358,18 +464,32 @@ class Agent:
         # Busca de produtos
         if intent["needs_product_search"] and intent["product_query"]:
             products = db.search_products(intent["product_query"])
+            active_promos = {
+                p["product_id"]: p for p in db.get_active_promotions()
+            }
             if products:
                 sources["tables"].append("products")
                 lines = [
                     "## Produtos Encontrados (dados reais do estoque)\n",
-                    "Use EXATAMENTE as quantidades abaixo. Nao invente estoque.\n",
+                    "Use EXATAMENTE as quantidades e precos abaixo. Nao invente estoque.\n",
+                    "Se houver preco promocional, apresente de/por com o percentual.\n",
                 ]
                 for p in products:
                     stock_status = "disponivel" if p["stock_quantity"] > 0 else "ESGOTADO"
-                    lines.append(
-                        f"- **{p['product_name']}** ({p['category_name']}): "
-                        f"R$ {p['price_brl']:.2f} | Estoque: {p['stock_quantity']} unidades ({stock_status})"
-                    )
+                    promo = active_promos.get(p["product_id"])
+                    if promo:
+                        sources["tables"].append("promotions")
+                        lines.append(
+                            f"- {p['product_name']} ({p['category_name']}): "
+                            f"de R$ {promo['original_price']:.2f} por R$ {promo['discounted_price']:.2f} "
+                            f"({promo['discount_percent']:.0f}% OFF — {promo['promotion_name']}) | "
+                            f"Estoque: {p['stock_quantity']} unidades ({stock_status})"
+                        )
+                    else:
+                        lines.append(
+                            f"- {p['product_name']} ({p['category_name']}): "
+                            f"R$ {p['price_brl']:.2f} | Estoque: {p['stock_quantity']} unidades ({stock_status})"
+                        )
                 context_parts.append("\n".join(lines))
             else:
                 context_parts.append(
@@ -379,22 +499,28 @@ class Agent:
                     "NAO invente estoque nem diga que esta esgotado sem dados."
                 )
 
-            promos = db.get_active_promotions()
+            # Promoções ativas gerais (mesmo sem match no nome da busca)
+            promos = list(active_promos.values())
             query_lower = intent["product_query"].lower()
             matching_promos = [
                 p for p in promos
                 if any(w in p["product_name"].lower() for w in query_lower.split() if len(w) > 2)
             ]
-            if matching_promos:
+            if matching_promos and "promotions" not in sources["tables"]:
                 sources["tables"].append("promotions")
-                lines = ["\n## Promocoes Ativas\n"]
-                for p in matching_promos:
-                    lines.append(
-                        f"- **{p['product_name']}**: de R$ {p['original_price']:.2f} "
-                        f"por R$ {p['discounted_price']:.2f} ({p['discount_percent']:.0f}% OFF) "
-                        f"— {p['promotion_name']}"
-                    )
-                context_parts.append("\n".join(lines))
+            if matching_promos:
+                # Já embutidas na lista de produtos acima; reforço só se produto não veio na busca
+                listed_ids = {p["product_id"] for p in products} if products else set()
+                extra = [p for p in matching_promos if p["product_id"] not in listed_ids]
+                if extra:
+                    lines = ["\n## Outras Promocoes Relacionadas\n"]
+                    for p in extra:
+                        lines.append(
+                            f"- {p['product_name']}: de R$ {p['original_price']:.2f} "
+                            f"por R$ {p['discounted_price']:.2f} ({p['discount_percent']:.0f}% OFF) "
+                            f"— {p['promotion_name']}"
+                        )
+                    context_parts.append("\n".join(lines))
 
         # Pedido por ID
         if intent["needs_order_lookup"] and intent["order_id"]:
@@ -404,17 +530,17 @@ class Agent:
                 o = order_details[0]
                 lines = [
                     f"\n## Pedido #{o['order_id']}\n",
-                    f"- **Cliente:** {o['customer_name']}",
-                    f"- **Data:** {o['order_date']}",
-                    f"- **Status:** {o['order_status']}",
-                    f"- **Total:** R$ {o['total_brl']:.2f}",
-                    f"- **Pagamento:** {o['payment_method']}",
+                    f"- Cliente: {o['customer_name']}",
+                    f"- Data: {o['order_date']}",
+                    f"- Status: {o['order_status']}",
+                    f"- Total: R$ {o['total_brl']:.2f}",
+                    f"- Pagamento: {o['payment_method']}",
                 ]
                 if o.get("tracking_code"):
-                    lines.append(f"- **Rastreio:** {o['tracking_code']}")
+                    lines.append(f"- Rastreio: {o['tracking_code']}")
                 if o.get("estimated_delivery"):
-                    lines.append(f"- **Previsao de entrega:** {o['estimated_delivery']}")
-                lines.append("\n**Itens:**")
+                    lines.append(f"- Previsao de entrega: {o['estimated_delivery']}")
+                lines.append("\nItens:")
                 for item in order_details:
                     lines.append(f"  - {item['quantity']}x {item['product_name']}")
                 context_parts.append("\n".join(lines))
@@ -439,31 +565,34 @@ class Agent:
     # -------------------------------------------------------------------------
 
     def _build_messages(self, user_message: str, context: str, history: list[dict]) -> list[dict]:
-        """Monta lista de mensagens para a LLM."""
-        messages = []
+        """
+        Monta mensagens para a LLM.
+        System prompt fica estático (melhor cache/prefixo na OpenAI);
+        dados dinâmicos vão em mensagem system separada.
+        """
+        messages = [{"role": "system", "content": self.system_prompt}]
 
-        system_content = self.system_prompt
         if context:
-            system_content += (
-                "\n\n---\n\n"
-                "## DADOS JÁ CONSULTADOS DO SISTEMA\n\n"
-                "As informações abaixo foram recuperadas automaticamente do banco de dados e da "
-                "base de conhecimento. Apresente-as DIRETAMENTE ao cliente.\n\n"
-                "REGRAS OBRIGATÓRIAS:\n"
-                "- NÃO diga que vai verificar — a consulta já foi feita.\n"
-                "- Para estoque/preço, use SOMENTE os números deste bloco.\n"
-                "- NUNCA invente quantidade em estoque nem diga 'esgotado' sem constar abaixo.\n"
-                "- Se o bloco disser que nenhum produto foi encontrado, peça o modelo completo.\n\n"
-                + context
-            )
-
-        messages.append({"role": "system", "content": system_content})
+            messages.append({
+                "role": "system",
+                "content": (
+                    "## DADOS JÁ CONSULTADOS DO SISTEMA\n\n"
+                    "Informações recuperadas automaticamente. Apresente DIRETAMENTE ao cliente.\n"
+                    "- NÃO diga que vai verificar — a consulta já foi feita.\n"
+                    "- Estoque/preço: use SOMENTE os números deste bloco.\n"
+                    "- NUNCA invente estoque nem diga esgotado sem constar abaixo.\n"
+                    "- Se nenhum produto foi encontrado, peça o modelo completo.\n"
+                    "- Resposta em texto limpo: SEM markdown, SEM asteriscos (**nome**), "
+                    "SEM negrito. Escreva o nome do produto em texto normal.\n"
+                    "- Emoji só se necessário; evite em listas de produto.\n\n"
+                    + context
+                ),
+            })
 
         for msg in history:
             messages.append({"role": msg["role"], "content": msg["content"]})
 
         messages.append({"role": "user", "content": user_message})
-
         return messages
 
     # -------------------------------------------------------------------------
@@ -503,15 +632,16 @@ class Agent:
         # 4. Reúne contexto
         context, sources = self._gather_context(message, intent, customer, unknown_contact)
 
-        # 5. Histórico da sessão (últimas 10 trocas)
+        # 5. Histórico da sessão (últimas 6 mensagens — menos tokens)
         history = db.get_session_messages(self.session_id)
-        history = [m for m in history if m["content"] != message][-10:]
+        history = [m for m in history if m["content"] != message][-6:]
 
         # 6. Monta mensagens para a LLM
         messages = self._build_messages(message, context, history)
 
         # 7. Chama a LLM
         response_content, llm_metrics = llm.chat(messages)
+        response_content = _clean_client_text(response_content)
 
         # 8. Salva resposta do agente
         rag_log_id = sources.pop("rag_log_id", None)

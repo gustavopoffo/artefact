@@ -20,6 +20,12 @@ class RAG:
             "Authorization": f"Bearer {config.supabase_key}",
             "Content-Type": "application/json",
         }
+        self._client = httpx.Client(
+            base_url=self.base_url,
+            headers=self.headers,
+            timeout=httpx.Timeout(30.0, connect=10.0),
+            limits=httpx.Limits(max_keepalive_connections=5, max_connections=10),
+        )
 
     def search(
         self,
@@ -33,17 +39,15 @@ class RAG:
 
         Retorna:
             - Lista de chunks encontrados
-            - Métricas da busca (para logging, inclui query_embedding)
+            - Métricas da busca (sem embedding — evita payload pesado)
         """
         match_count = match_count or config.rag_match_count
         similarity_threshold = similarity_threshold or config.rag_similarity_threshold
 
         start_time = time.perf_counter()
 
-        # Gera embedding da query
         query_embedding = generate_embedding(query)
 
-        # Chama função match_chunks via RPC
         rpc_payload = {
             "query_embedding": query_embedding,
             "match_count": match_count,
@@ -52,24 +56,16 @@ class RAG:
         if filter_category:
             rpc_payload["filter_category"] = filter_category
 
-        with httpx.Client(timeout=30) as client:
-            response = client.post(
-                f"{self.base_url}/rpc/match_chunks",
-                headers=self.headers,
-                json=rpc_payload,
-            )
+        response = self._client.post("/rpc/match_chunks", json=rpc_payload)
 
-            if response.status_code >= 400:
-                raise RuntimeError(f"RAG search error: {response.status_code} - {response.text}")
+        if response.status_code >= 400:
+            raise RuntimeError(f"RAG search error: {response.status_code} - {response.text}")
 
-            chunks = response.json()
-
+        chunks = response.json()
         elapsed_ms = int((time.perf_counter() - start_time) * 1000)
 
-        # Métricas (inclui embedding para persistência)
         metrics = {
             "query_text": query,
-            "query_embedding": query_embedding,
             "chunks_returned": [c["chunk_id"] for c in chunks],
             "chunks_count": len(chunks),
             "top_similarity": chunks[0]["similarity"] if chunks else None,

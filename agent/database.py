@@ -3,6 +3,7 @@ Acesso ao banco de dados Supabase via PostgREST.
 """
 
 import json
+import re
 from typing import Any
 from uuid import UUID
 import httpx
@@ -185,7 +186,7 @@ class Database:
     def log_rag_query(
         self,
         query_text: str,
-        query_embedding: list[float],
+        query_embedding: list[float] | None,
         chunks_returned: list[str],
         top_similarity: float | None,
         avg_similarity: float | None,
@@ -195,13 +196,15 @@ class Database:
         """Registra busca RAG para análise. Retorna o log com log_id."""
         data = {
             "query_text": query_text,
-            "query_embedding": query_embedding,
             "chunks_returned": chunks_returned,
             "chunks_count": len(chunks_returned),
             "top_similarity": top_similarity,
             "avg_similarity": avg_similarity,
             "search_time_ms": search_time_ms,
         }
+        # Embedding é opcional no hot path (vetor 1536 atrasa o insert)
+        if query_embedding:
+            data["query_embedding"] = query_embedding
         if session_id:
             data["session_id"] = session_id
 
@@ -228,12 +231,40 @@ class Database:
         return result[0] if result else None
 
     def find_customer_by_phone(self, phone: str) -> dict | None:
-        """Busca cliente por telefone."""
+        """Busca cliente por telefone (normaliza para o formato do cadastro)."""
+        normalized = self.normalize_phone(phone)
+        if not normalized:
+            return None
+
         result = self._request("GET", "customers", params={
-            "phone": f"eq.{phone}",
+            "phone": f"eq.{normalized}",
+            "select": "*",
+        })
+        if result:
+            return result[0]
+
+        # Fallback: últimos 8 dígitos (caso o cadastro tenha formatação diferente)
+        digits = re.sub(r"\D", "", normalized)
+        tail = digits[-8:] if len(digits) >= 8 else digits
+        if not tail:
+            return None
+        result = self._request("GET", "customers", params={
+            "phone": f"like.*{tail}",
             "select": "*",
         })
         return result[0] if result else None
+
+    @staticmethod
+    def normalize_phone(phone: str) -> str | None:
+        """Normaliza telefone para o formato do CSV: (67) 99812-3456."""
+        digits = re.sub(r"\D", "", phone or "")
+        if digits.startswith("55") and len(digits) >= 12:
+            digits = digits[2:]
+        if len(digits) == 11:
+            return f"({digits[:2]}) {digits[2:7]}-{digits[7:]}"
+        if len(digits) == 10:
+            return f"({digits[:2]}) {digits[2:6]}-{digits[6:]}"
+        return None
 
     def get_customer_by_id(self, customer_id: int) -> dict | None:
         """Busca cliente por ID."""
@@ -375,6 +406,62 @@ class Database:
             "select": "product_id,product_name,original_price,discount_percent,discounted_price,promotion_name,category_name",
             "order": "discount_percent.desc",
         })
+
+    def list_promotions(self) -> list[dict]:
+        """Lista todas as promoções com dados do produto (admin)."""
+        rows = self._request("GET", "promotions", params={
+            "select": "promotion_id,product_id,discount_percent,description,is_active",
+            "order": "is_active.desc,promotion_id.asc",
+        })
+        if not rows:
+            return []
+
+        product_ids = sorted({int(r["product_id"]) for r in rows})
+        products = self._request("GET", "products", params={
+            "product_id": f"in.({','.join(str(i) for i in product_ids)})",
+            "select": "product_id,name,price_brl,status",
+        })
+        by_id = {int(p["product_id"]): p for p in products}
+
+        result = []
+        for row in rows:
+            product = by_id.get(int(row["product_id"]), {})
+            original = float(product.get("price_brl") or 0)
+            pct = float(row.get("discount_percent") or 0)
+            discounted = round(original * (1 - pct / 100), 2)
+            result.append({
+                "promotion_id": row["promotion_id"],
+                "product_id": row["product_id"],
+                "product_name": product.get("name") or f"Produto #{row['product_id']}",
+                "product_status": product.get("status"),
+                "original_price": original,
+                "discount_percent": pct,
+                "discounted_price": discounted,
+                "description": row.get("description") or "",
+                "is_active": bool(row.get("is_active")),
+            })
+        return result
+
+    def set_promotion_active(self, promotion_id: int, is_active: bool) -> dict | None:
+        """Ativa ou desativa uma promoção."""
+        updated = self._request(
+            "PATCH",
+            "promotions",
+            {"is_active": is_active},
+            params={
+                "promotion_id": f"eq.{promotion_id}",
+                "select": "promotion_id,product_id,discount_percent,description,is_active",
+            },
+        )
+        if not updated:
+            return None
+        # Recarrega com preço do produto
+        all_promos = self.list_promotions()
+        for p in all_promos:
+            if p["promotion_id"] == promotion_id:
+                return p
+        row = updated[0] if isinstance(updated, list) else updated
+        return row
 
     def get_low_stock_products(self, threshold: int = 5) -> list[dict]:
         """Busca produtos com estoque baixo."""

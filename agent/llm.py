@@ -9,17 +9,27 @@ from .config import config
 
 
 class LLM:
-    """Cliente para OpenAI Chat Completions."""
+    """Cliente para OpenAI Chat Completions (conexão reutilizada)."""
 
     def __init__(self, model: str | None = None):
         self.model = model or config.llm_model
         self.api_key = config.openai_api_key
+        # Keep-alive: evita TLS/handshake novo a cada mensagem (~ganho de latência)
+        self._client = httpx.Client(
+            base_url="https://api.openai.com/v1",
+            headers={
+                "Authorization": f"Bearer {self.api_key}",
+                "Content-Type": "application/json",
+            },
+            timeout=httpx.Timeout(60.0, connect=10.0),
+            limits=httpx.Limits(max_keepalive_connections=5, max_connections=10),
+        )
 
     def chat(
         self,
         messages: list[dict],
-        temperature: float = 0.7,
-        max_tokens: int = 1024,
+        temperature: float = 0.6,
+        max_tokens: int = 400,
     ) -> tuple[str, dict]:
         """
         Envia mensagens para a LLM e retorna resposta.
@@ -28,11 +38,6 @@ class LLM:
             - Texto da resposta
             - Métricas (model, tokens, tempo)
         """
-        url = "https://api.openai.com/v1/chat/completions"
-        headers = {
-            "Authorization": f"Bearer {self.api_key}",
-            "Content-Type": "application/json",
-        }
         payload = {
             "model": self.model,
             "messages": messages,
@@ -41,15 +46,12 @@ class LLM:
         }
 
         start_time = time.perf_counter()
+        response = self._client.post("/chat/completions", json=payload)
 
-        with httpx.Client(timeout=60) as client:
-            response = client.post(url, headers=headers, json=payload)
+        if response.status_code >= 400:
+            raise RuntimeError(f"LLM error: {response.status_code} - {response.text}")
 
-            if response.status_code >= 400:
-                raise RuntimeError(f"LLM error: {response.status_code} - {response.text}")
-
-            data = response.json()
-
+        data = response.json()
         elapsed_ms = int((time.perf_counter() - start_time) * 1000)
 
         content = data["choices"][0]["message"]["content"]

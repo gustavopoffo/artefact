@@ -1,5 +1,5 @@
 import { NavLink } from 'react-router-dom';
-import { MessageSquare, BarChart3, Music, Home, Settings } from 'lucide-react';
+import { MessageSquare, BarChart3, Music, Home, Settings, Tag } from 'lucide-react';
 
 export default function AdminSidebar() {
   const linkClass = ({ isActive }: { isActive: boolean }) =>
@@ -34,6 +34,10 @@ export default function AdminSidebar() {
         <NavLink to="/admin/dashboard" className={linkClass}>
           <BarChart3 className="w-5 h-5" />
           <span>Dashboard</span>
+        </NavLink>
+        <NavLink to="/admin/promocoes" className={linkClass}>
+          <Tag className="w-5 h-5" />
+          <span>Promoções</span>
         </NavLink>
 
         <p className="px-4 pt-4 pb-2 text-xs font-semibold uppercase tracking-wide text-gray-400">
