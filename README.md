@@ -49,7 +49,7 @@ Sistema completo de **agente conversacional com IA** para atendimento a clientes
 | Preços e promoções | `products`, `promotions` | "Qual o preço do ukulele Kala?" |
 | Status de pedido | `orders`, `order_items` | "Onde está meu pedido #15?" |
 | Cadastro de cliente | `customers` | "Meu email está cadastrado?" |
-| Políticas da loja | `knowledge_sources` | "Qual o prazo de devolução?" |
+| Políticas da loja | `rag_chunks` (RAG) | "Qual o prazo de devolução?" |
 | Formas de pagamento | Políticas + ENUMs | "Vocês parcelam em quantas vezes?" |
 
 ---
@@ -138,15 +138,8 @@ Sistema completo de **agente conversacional com IA** para atendimento a clientes
 │ channel             │       │ model_used          │
 └─────────────────────┘       │ response_time_ms    │
                               │ rating              │
-┌─────────────────────┐       │ sources_consulted   │
-│  knowledge_sources  │       └─────────────────────┘
-├─────────────────────┤
-│ source_id PK (UUID) │
-│ name                │
-│ source_type         │
-│ content             │
-│ embedding_status    │
-└─────────────────────┘
+                              │ sources_consulted   │
+                              └─────────────────────┘
 ```
 
 ### Relacionamentos
@@ -275,18 +268,6 @@ Mensagens individuais (cliente e IA).
 - `tokens_*` → Controle de custo
 - `sources_consulted` → Rastreabilidade
 - `rating` + `rating_feedback` → **Validação de acurácia**
-
-#### `knowledge_sources`
-Fontes de conhecimento do agente.
-
-| Coluna | Tipo | Descrição |
-|--------|------|-----------|
-| `source_id` | uuid | PK |
-| `name` | text | Identificador único |
-| `source_type` | text | `document`, `policy`, `faq` |
-| `content` | text | Conteúdo textual |
-| `file_path` | text | Arquivo original |
-| `embedding_status` | text | Status do embedding |
 
 ---
 
@@ -605,6 +586,15 @@ Este diagrama mostra exatamente o que acontece em cada etapa de uma conversa, qu
 
 ```
 artefact/
+├── agent/                                   # Agente conversacional
+│   ├── __init__.py                         # Exporta classe Agent
+│   ├── config.py                           # Configurações (carrega .env)
+│   ├── database.py                         # Acesso ao Supabase via PostgREST
+│   ├── embeddings.py                       # Geração de embeddings (OpenAI)
+│   ├── rag.py                              # Busca semântica (match_chunks)
+│   ├── llm.py                              # Interface com LLM (GPT)
+│   ├── chat.py                             # Orquestração principal do fluxo
+│   └── main.py                             # CLI para testes
 ├── data/                                    # CSVs de origem (já importados ao Supabase)
 │   ├── desafio_tecnico_ai_eng - categories.csv
 │   ├── desafio_tecnico_ai_eng - customers.csv
@@ -663,7 +653,31 @@ O wrapper `scripts/mcp-postgrest.cjs` lê o `.env` e inicia `@supabase/mcp-serve
 - [x] Estrutura RAG criada (`agent_prompts`, `rag_chunks`, `rag_query_log`, função `match_chunks`)
 - [x] System prompt v1.0.0 e 14 chunks de política definidos e documentados
 - [x] Embeddings gerados e dados populados via `seed_rag.py`
-- [ ] Implementar lógica do agente (`feature/agent`)
-- [ ] Criar endpoint da API
+- [x] Lógica do agente implementada (`agent/`)
+- [ ] Criar endpoint da API (FastAPI)
 - [ ] Criar frontend de chat
 - [ ] Dashboard de métricas e acompanhamento
+
+## Uso do Agente
+
+```python
+from agent import Agent
+
+# Criar agente (inicia sessão automaticamente)
+agent = Agent(channel="web")
+
+# Enviar mensagem
+response = agent.chat("Vocês têm violão Yamaha?")
+print(response.content)
+
+# Métricas disponíveis
+print(f"Tokens: {response.tokens_input} + {response.tokens_output}")
+print(f"Tempo: {response.response_time_ms}ms")
+print(f"RAG chunks usados: {response.rag_chunks_used}")
+```
+
+Ou via CLI:
+
+```bash
+python -m agent.main
+```

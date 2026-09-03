@@ -1,4 +1,4 @@
-# Dependências Python — Empório da Música RAG
+# Dependencias Python — Emporio da Musica
 
-# HTTP client (requisições para Supabase e OpenAI)
+# HTTP client (requisicoes para Supabase e OpenAI)
 httpx>=0.27.0
