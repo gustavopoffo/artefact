@@ -462,10 +462,19 @@ DIREITOS DO CLIENTE:
 def seed_prompt():
     """Insere o system prompt na tabela agent_prompts"""
     print("\n[1/3] Inserindo System Prompt...")
+
+    existing = supabase_request(
+        "GET",
+        "agent_prompts",
+        params={"name": "eq.system_prompt", "version": "eq.1.0.0", "select": "prompt_id,tokens_estimated"},
+    )
+    if existing:
+        print(f"    OK Prompt ja existe: {existing[0]['prompt_id']}")
+        return existing[0]
     
     prompt_data = {
         "name": "system_prompt",
-        "description": "Prompt inicial do agente com identidade, horário e diretrizes de atendimento",
+        "description": "Prompt inicial do agente com identidade, horario e diretrizes de atendimento",
         "content": SYSTEM_PROMPT_V1,
         "version": "1.0.0",
         "is_active": True,
@@ -473,8 +482,8 @@ def seed_prompt():
     }
     
     result = supabase_request("POST", "agent_prompts", prompt_data)
-    print(f"    ✓ Prompt inserido: {result[0]['prompt_id']}")
-    print(f"    ✓ Tokens estimados: {prompt_data['tokens_estimated']}")
+    print(f"    OK Prompt inserido: {result[0]['prompt_id']}")
+    print(f"    OK Tokens estimados: {prompt_data['tokens_estimated']}")
     return result[0]
 
 
@@ -487,6 +496,17 @@ def seed_chunks():
     
     for i, chunk in enumerate(RAG_CHUNKS, 1):
         print(f"    [{i}/{total}] {chunk['section_number']} - {chunk['source_section']}", end="")
+
+        hash_value = content_hash(chunk["content"])
+        existing = supabase_request(
+            "GET",
+            "rag_chunks",
+            params={"content_hash": f"eq.{hash_value}", "select": "chunk_id,tokens_count"},
+        )
+        if existing:
+            inserted.append(existing[0])
+            print(f" SKIP (ja existe, {existing[0].get('tokens_count', '?')} tokens)")
+            continue
         
         # Gerar embedding
         embedding = generate_embedding(chunk["content"])
@@ -494,7 +514,7 @@ def seed_chunks():
         # Preparar dados
         chunk_data = {
             "content": chunk["content"],
-            "content_hash": content_hash(chunk["content"]),
+            "content_hash": hash_value,
             "embedding": embedding,
             "source_document": chunk["source_document"],
             "source_section": chunk["source_section"],
@@ -510,7 +530,7 @@ def seed_chunks():
         
         result = supabase_request("POST", "rag_chunks", chunk_data)
         inserted.append(result[0])
-        print(f" ✓ ({chunk_data['tokens_count']} tokens)")
+        print(f" OK ({chunk_data['tokens_count']} tokens)")
     
     return inserted
 
@@ -536,7 +556,7 @@ def update_chunk_totals():
             {"total_chunks_in_section": count},
             params={"source_section": f"eq.{section}"}
         )
-        print(f"    ✓ {section}: {count} chunks")
+        print(f"    OK {section}: {count} chunks")
 
 
 def main():
@@ -550,19 +570,15 @@ def main():
         update_chunk_totals()
         
         print("\n" + "=" * 60)
-        print("✓ SEED COMPLETO!")
+        print("SEED COMPLETO!")
         print("=" * 60)
         
-        # Resumo
-        prompts = supabase_request("GET", "agent_prompts", params={"select": "count"})
-        chunks = supabase_request("GET", "rag_chunks", params={"select": "count"})
-        
-        print(f"\nResumo:")
-        print(f"  - Prompts: verificar no Supabase")
-        print(f"  - Chunks: verificar no Supabase")
+        print("\nResumo:")
+        print("  - Prompts: verificar no Supabase (agent_prompts)")
+        print("  - Chunks: verificar no Supabase (rag_chunks)")
         
     except Exception as e:
-        print(f"\n✗ ERRO: {e}")
+        print(f"\nERRO: {e}")
         raise
 
 
