@@ -18,6 +18,7 @@ from agent.database import db
 from .schemas import (
     AdminMetrics,
     AdminSessionItem,
+    AdminSettingsResponse,
     ChatRequest,
     ChatResponse,
     CreateSessionRequest,
@@ -31,6 +32,7 @@ from .schemas import (
     RateMessageResponse,
     SessionResponse,
     TogglePromotionRequest,
+    UpdateAdminSettingsRequest,
 )
 
 app = FastAPI(
@@ -321,3 +323,29 @@ def toggle_promotion(promotion_id: int, body: TogglePromotionRequest) -> Promoti
     if not updated:
         raise HTTPException(status_code=404, detail="Promocao nao encontrada")
     return PromotionItem(**updated)
+
+
+@app.get("/admin/settings", response_model=AdminSettingsResponse, tags=["admin"])
+def get_admin_settings() -> AdminSettingsResponse:
+    """Retorna configurações runtime (modelo LLM ativo e opções)."""
+    from agent.runtime_settings import get_settings_payload
+
+    return AdminSettingsResponse(**get_settings_payload())
+
+
+@app.patch("/admin/settings", response_model=AdminSettingsResponse, tags=["admin"])
+def update_admin_settings(body: UpdateAdminSettingsRequest) -> AdminSettingsResponse:
+    """Atualiza o modelo OpenAI usado pelo agente."""
+    from agent.runtime_settings import get_settings_payload, set_llm_model
+
+    try:
+        set_llm_model(body.llm_model)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Falha ao salvar configuracao: {exc}",
+        ) from exc
+
+    return AdminSettingsResponse(**get_settings_payload())

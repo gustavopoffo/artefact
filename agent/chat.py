@@ -639,8 +639,10 @@ class Agent:
         # 6. Monta mensagens para a LLM
         messages = self._build_messages(message, context, history)
 
-        # 7. Chama a LLM
-        response_content, llm_metrics = llm.chat(messages)
+        # 7. Chama a LLM (modelo configurável no admin)
+        from .runtime_settings import get_llm_model
+
+        response_content, llm_metrics = llm.chat(messages, model=get_llm_model())
         response_content = _clean_client_text(response_content)
 
         # 8. Salva resposta do agente

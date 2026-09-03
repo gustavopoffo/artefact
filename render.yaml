@@ -18,3 +18,5 @@ services:
         sync: false
       - key: FRONTEND_ORIGIN
         sync: false
+      - key: LLM_MODEL
+        value: gpt-4o

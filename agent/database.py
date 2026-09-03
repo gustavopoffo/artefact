@@ -179,6 +179,40 @@ class Database:
                 params={"prompt_id": f"eq.{prompt_id}"}
             )
 
+    def upsert_runtime_settings(self, settings: dict) -> dict:
+        """
+        Persiste settings do agente em agent_prompts (name=runtime_settings).
+        Reutiliza a tabela existente — sem migration.
+        """
+        content = json.dumps(settings, ensure_ascii=False)
+        existing = self._request("GET", "agent_prompts", params={
+            "name": "eq.runtime_settings",
+            "is_active": "eq.true",
+            "select": "prompt_id",
+            "limit": "1",
+        })
+        if existing:
+            result = self._request(
+                "PATCH",
+                "agent_prompts",
+                {
+                    "content": content,
+                    "description": "Configuracoes runtime do agente (modelo LLM etc.)",
+                },
+                params={"prompt_id": f"eq.{existing[0]['prompt_id']}"},
+            )
+            return result[0] if isinstance(result, list) else result
+
+        result = self._request("POST", "agent_prompts", {
+            "name": "runtime_settings",
+            "description": "Configuracoes runtime do agente (modelo LLM etc.)",
+            "content": content,
+            "version": "1.0.0",
+            "is_active": True,
+            "tokens_estimated": 0,
+        })
+        return result[0] if isinstance(result, list) else result
+
     # -------------------------------------------------------------------------
     # RAG Query Log
     # -------------------------------------------------------------------------

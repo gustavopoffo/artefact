@@ -29,7 +29,8 @@ class LLM:
         self,
         messages: list[dict],
         temperature: float = 0.6,
-        max_tokens: int = 400,
+        max_tokens: int = 500,
+        model: str | None = None,
     ) -> tuple[str, dict]:
         """
         Envia mensagens para a LLM e retorna resposta.
@@ -38,8 +39,9 @@ class LLM:
             - Texto da resposta
             - Métricas (model, tokens, tempo)
         """
+        used_model = model or self.model
         payload = {
-            "model": self.model,
+            "model": used_model,
             "messages": messages,
             "temperature": temperature,
             "max_tokens": max_tokens,
@@ -58,7 +60,7 @@ class LLM:
         usage = data.get("usage", {})
 
         metrics = {
-            "model_used": self.model,
+            "model_used": used_model,
             "tokens_input": usage.get("prompt_tokens", 0),
             "tokens_output": usage.get("completion_tokens", 0),
             "response_time_ms": elapsed_ms,
