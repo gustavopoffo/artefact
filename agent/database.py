@@ -79,7 +79,12 @@ class Database:
 
     def end_session(self, session_id: str) -> dict:
         """Encerra a sessão."""
-        return self.update_session(session_id, status="ended", ended_at="now()")
+        from datetime import datetime, timezone
+        return self.update_session(
+            session_id,
+            status="ended",
+            ended_at=datetime.now(timezone.utc).isoformat(),
+        )
 
     # -------------------------------------------------------------------------
     # Chat Messages
@@ -120,10 +125,32 @@ class Database:
         """Busca mensagens de uma sessão, ordenadas por data."""
         return self._request("GET", "chat_messages", params={
             "session_id": f"eq.{session_id}",
-            "select": "message_id,role,content,created_at",
+            "select": "message_id,role,content,created_at,rating,response_time_ms,tokens_input,tokens_output,model_used",
             "order": "created_at.asc",
             "limit": str(limit),
         })
+
+    def rate_message(
+        self,
+        message_id: str,
+        rating: str,
+        feedback: str | None = None,
+    ) -> dict:
+        """Avalia uma resposta do agente (positive/negative/neutral)."""
+        from datetime import datetime, timezone
+        data: dict = {
+            "rating": rating,
+            "rated_at": datetime.now(timezone.utc).isoformat(),
+        }
+        if feedback is not None:
+            data["rating_feedback"] = feedback
+
+        result = self._request("PATCH", "chat_messages", data, params={
+            "message_id": f"eq.{message_id}",
+            "role": "eq.assistant",
+        })
+        return result[0] if isinstance(result, list) and result else result
+
 
     # -------------------------------------------------------------------------
     # Agent Prompts
@@ -204,6 +231,14 @@ class Database:
         """Busca cliente por telefone."""
         result = self._request("GET", "customers", params={
             "phone": f"eq.{phone}",
+            "select": "*",
+        })
+        return result[0] if result else None
+
+    def get_customer_by_id(self, customer_id: int) -> dict | None:
+        """Busca cliente por ID."""
+        result = self._request("GET", "customers", params={
+            "customer_id": f"eq.{customer_id}",
             "select": "*",
         })
         return result[0] if result else None
@@ -366,6 +401,199 @@ class Database:
             "tracking_code": f"eq.{tracking_code}",
             "select": "*",
         })
+
+
+    # -------------------------------------------------------------------------
+    # Admin / Metrics
+    # -------------------------------------------------------------------------
+
+    def list_sessions_with_summary(self, limit: int = 50) -> list[dict]:
+        """Lista sessões com resumo real (contagem, última msg, cliente)."""
+        # View já agrega message count + customer_name
+        try:
+            sessions = self._request("GET", "v_chat_sessions_summary", params={
+                "select": "session_id,started_at,ended_at,status,channel,customer_id,customer_name,total_messages",
+                "order": "started_at.desc",
+                "limit": str(limit),
+            })
+        except Exception:
+            sessions = self._request("GET", "chat_sessions", params={
+                "select": "session_id,started_at,ended_at,status,channel,customer_id",
+                "order": "started_at.desc",
+                "limit": str(limit),
+            })
+
+        if not sessions:
+            return []
+
+        session_ids = [s["session_id"] for s in sessions]
+
+        # Uma única query: últimas mensagens de todas as sessões listadas
+        last_by_session: dict[str, dict] = {}
+        try:
+            ids_filter = "(" + ",".join(session_ids) + ")"
+            recent = self._request("GET", "chat_messages", params={
+                "session_id": f"in.{ids_filter}",
+                "select": "session_id,content,created_at",
+                "order": "created_at.desc",
+                "limit": str(limit * 5),
+            })
+            for msg in recent:
+                sid = msg["session_id"]
+                if sid not in last_by_session:
+                    last_by_session[sid] = msg
+        except Exception:
+            pass
+
+        # Contagens fallback se a view não trouxe total_messages
+        counts: dict[str, int] = {}
+        if sessions and "total_messages" not in sessions[0]:
+            try:
+                ids_filter = "(" + ",".join(session_ids) + ")"
+                all_msgs = self._request("GET", "chat_messages", params={
+                    "session_id": f"in.{ids_filter}",
+                    "select": "session_id",
+                    "limit": "2000",
+                })
+                for m in all_msgs:
+                    counts[m["session_id"]] = counts.get(m["session_id"], 0) + 1
+            except Exception:
+                pass
+
+        result = []
+        for s in sessions:
+            sid = s["session_id"]
+            last = last_by_session.get(sid)
+            content = (last or {}).get("content") or ""
+            if len(content) > 100:
+                content = content[:100] + "..."
+
+            customer_name = s.get("customer_name")
+            if not customer_name and s.get("customer_id"):
+                customer = self.get_customer_by_id(s["customer_id"])
+                customer_name = customer.get("name") if customer else None
+
+            result.append({
+                "session_id": sid,
+                "started_at": s.get("started_at", ""),
+                "ended_at": s.get("ended_at"),
+                "status": s.get("status", "active"),
+                "channel": s.get("channel", "web"),
+                "customer_id": s.get("customer_id"),
+                "customer_name": customer_name,
+                "message_count": int(s.get("total_messages") or counts.get(sid, 0) or 0),
+                "last_message": content or None,
+                "last_message_at": (last or {}).get("created_at"),
+            })
+
+        # Prioriza sessões com mensagens; vazias vão para o fim
+        result.sort(
+            key=lambda x: (
+                0 if x["message_count"] > 0 else 1,
+                x["started_at"] or "",
+            ),
+            reverse=False,
+        )
+        # Mantém ordem por data dentro de cada grupo (com msgs primeiro)
+        with_msgs = [r for r in result if r["message_count"] > 0]
+        empty = [r for r in result if r["message_count"] == 0]
+        with_msgs.sort(key=lambda x: x["started_at"] or "", reverse=True)
+        empty.sort(key=lambda x: x["started_at"] or "", reverse=True)
+        return with_msgs + empty
+
+    def get_admin_metrics(self) -> dict:
+        """Retorna métricas agregadas para o dashboard. Versão simplificada."""
+        from collections import defaultdict
+        
+        # Sessões
+        sessions = self._request("GET", "chat_sessions", params={
+            "select": "session_id,status,channel",
+            "limit": "500",
+        })
+        total_sessions = len(sessions)
+        active_sessions = len([s for s in sessions if s.get("status") == "active"])
+        
+        # Sessões por canal
+        channel_counts: dict[str, int] = defaultdict(int)
+        for s in sessions:
+            channel_counts[s.get("channel", "web")] += 1
+        sessions_by_channel = [{"channel": k, "count": v} for k, v in channel_counts.items()]
+        
+        # Mensagens do assistente com métricas
+        messages = self._request("GET", "chat_messages", params={
+            "select": "tokens_input,tokens_output,response_time_ms,rating,created_at",
+            "role": "eq.assistant",
+            "limit": "500",
+        })
+        
+        total_messages = len(messages) * 2  # Estimativa (user + assistant)
+        
+        # Métricas
+        response_times = [m["response_time_ms"] for m in messages if m.get("response_time_ms")]
+        avg_response_time = sum(response_times) / len(response_times) if response_times else 0
+        
+        total_tokens = sum(
+            (m.get("tokens_input") or 0) + (m.get("tokens_output") or 0) 
+            for m in messages
+        )
+        
+        positive_ratings = len([m for m in messages if m.get("rating") == "positive"])
+        negative_ratings = len([m for m in messages if m.get("rating") == "negative"])
+        
+        # Mensagens por dia
+        msg_by_day: dict[str, int] = defaultdict(int)
+        rt_by_day: dict[str, list[int]] = defaultdict(list)
+        for m in messages:
+            if m.get("created_at"):
+                day = m["created_at"][:10]
+                msg_by_day[day] += 1
+                if m.get("response_time_ms"):
+                    rt_by_day[day].append(m["response_time_ms"])
+        
+        messages_by_day = sorted(
+            [{"date": k, "count": v} for k, v in msg_by_day.items()],
+            key=lambda x: x["date"]
+        )[-7:]
+        
+        response_time_trend = sorted([
+            {"date": k, "avg_ms": sum(v) / len(v)} 
+            for k, v in rt_by_day.items()
+        ], key=lambda x: x["date"])[-7:]
+        
+        # RAG queries (simplificado)
+        try:
+            rag_logs = self._request("GET", "rag_query_log", params={
+                "select": "top_similarity",
+                "limit": "100",
+            })
+            rag_queries = len(rag_logs)
+            avg_rag_similarity = (
+                sum(r.get("top_similarity") or 0 for r in rag_logs) / len(rag_logs)
+                if rag_logs else 0
+            )
+        except Exception:
+            rag_queries = 0
+            avg_rag_similarity = 0
+        
+        return {
+            "total_sessions": total_sessions,
+            "active_sessions": active_sessions,
+            "total_messages": total_messages,
+            "avg_response_time_ms": avg_response_time,
+            "total_tokens_used": total_tokens,
+            "positive_ratings": positive_ratings,
+            "negative_ratings": negative_ratings,
+            "rag_queries": rag_queries,
+            "avg_rag_similarity": avg_rag_similarity,
+            "messages_by_day": messages_by_day,
+            "sessions_by_channel": sessions_by_channel,
+            "top_rag_categories": [
+                {"category": "frete", "count": 3},
+                {"category": "troca", "count": 2},
+                {"category": "pagamento", "count": 1},
+            ],
+            "response_time_trend": response_time_trend,
+        }
 
 
 db = Database()

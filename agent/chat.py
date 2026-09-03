@@ -59,13 +59,21 @@ class Agent:
         self._initialized = False
 
     def _initialize(self) -> None:
-        """Inicializa sessão e carrega prompt."""
+        """Inicializa sessão, restaura cliente vinculado e carrega prompt."""
         if self._initialized:
             return
 
         if not self.session_id:
             session = db.create_session(channel=self.channel)
             self.session_id = session["session_id"]
+        else:
+            # Reabre sessão existente (ex.: chamada via API) e restaura cliente
+            session = db.get_session(self.session_id)
+            if not session:
+                raise ValueError(f"Sessao nao encontrada: {self.session_id}")
+            if session.get("customer_id") and not self.customer_id:
+                self.customer_id = session["customer_id"]
+                self.customer = db.get_customer_by_id(self.customer_id)
 
         prompt = db.get_active_prompt("system_prompt")
         if not prompt:
@@ -181,7 +189,6 @@ class Agent:
         """
         Detecta a intenção da mensagem para decidir o que buscar.
         """
-        # Versão normalizada (sem acentos, minúsculas) para comparações robustas
         msg_norm = _normalize(message)
 
         intent = {
@@ -195,38 +202,72 @@ class Agent:
             "needs_customer_history": False,
         }
 
-        # Categorias de instrumentos têm prioridade máxima (normalizadas — sem acento)
+        brands = [
+            "yamaha", "fender", "crafter", "tagima", "giannini", "rozini",
+            "pearl", "ibanez", "takamine", "kala", "memphis", "cort",
+            "epiphone", "gibson", "stratocaster", "telecaster",
+        ]
         categories = [
             "violao", "violoes", "guitarra", "guitarras", "baixo", "baixos",
             "ukulele", "teclado", "teclados", "piano", "pianos",
             "bateria", "baterias", "sopro", "cordas",
         ]
-        for cat in categories:
-            if cat in msg_norm:
-                intent["needs_product_search"] = True
-                intent["product_query"] = cat
-                break  # usa a primeira categoria encontrada
+        query_stop = {
+            "quantas", "quantos", "quanto", "quais", "qual", "voce", "voces",
+            "tem", "tinha", "estoque", "disponivel", "disponiveis", "unidade",
+            "unidades", "da", "de", "do", "das", "dos", "em", "no", "na",
+            "uma", "um", "me", "diz", "sobre", "quero", "saber",
+        }
 
-        # Regex captura produto específico (marca, modelo) apenas se não achou categoria
+        # 1) Marcas/modelos primeiro (evita capturar "em estoque" como produto)
+        for brand in brands:
+            if brand in msg_norm:
+                intent["needs_product_search"] = True
+                intent["product_query"] = brand
+                break
+
+        # 2) Categorias
+        if not intent["product_query"]:
+            for cat in categories:
+                if cat in msg_norm:
+                    intent["needs_product_search"] = True
+                    intent["product_query"] = cat
+                    break
+
+        # 3) Regex para produto específico
         if not intent["product_query"]:
             product_patterns = [
-                r"voces?\s+tem\s+(.+?)(\?|$)",
                 r"procuro\s+(.+?)(\?|$)",
                 r"quero\s+comprar\s+(.+?)(\?|$)",
                 r"preco\s+d[oa]\s+(.+?)(\?|$)",
-                r"quanto\s+custa\s+(.+?)(\?|$)",
+                r"quanto\s+custa\s+(?:o|a)?\s*(.+?)(\?|$)",
                 r"estoque\s+d[oa]\s+(.+?)(\?|$)",
-                r"tem\s+o\s+(.+?)(\?|$)",
-                r"tem\s+(yamaha|fender|crafter|tagima|giannini|rozini|pearl|ibanez|takamine)\s+(.+?)(\?|$)",
+                r"tem\s+(?:o|a)?\s*(.+?)(\?|$)",
             ]
             for pattern in product_patterns:
                 match = re.search(pattern, msg_norm)
                 if match:
-                    intent["needs_product_search"] = True
-                    intent["product_query"] = match.group(1).strip()
-                    break
+                    raw = match.group(1).strip()
+                    cleaned = " ".join(
+                        w for w in raw.split()
+                        if w not in query_stop and len(w) > 2
+                    )
+                    if cleaned:
+                        intent["needs_product_search"] = True
+                        intent["product_query"] = cleaned
+                        break
 
-        # RAG - políticas (normalizadas)
+        # 4) Estoque sem marca clara → extrai tokens úteis
+        stock_triggers = ["estoque", "disponivel", "quantas", "quantos", "unidade"]
+        if not intent["product_query"] and any(t in msg_norm for t in stock_triggers):
+            tokens = [
+                w for w in re.findall(r"[a-z0-9]+", msg_norm)
+                if w not in query_stop and len(w) > 2
+            ]
+            if tokens:
+                intent["needs_product_search"] = True
+                intent["product_query"] = " ".join(tokens[:4])
+
         rag_triggers = {
             "pagamento": ["pagar", "parcela", "cartao", "pix", "boleto", "pagamento", "credito", "debito"],
             "troca": ["trocar", "troca", "devolver", "devolucao", "arrependimento", "defeito"],
@@ -241,19 +282,16 @@ class Agent:
                 intent["rag_category"] = rag_cat
                 break
 
-        # Pedido por ID
         order_match = re.search(r"pedido\s*#?\s*(\d+)", msg_norm)
         if order_match:
             intent["needs_order_lookup"] = True
             intent["order_id"] = int(order_match.group(1))
 
-        # Rastreio
         tracking_match = re.search(r"(BR[A-Z0-9]{9,}BR)", message.upper())
         if tracking_match:
             intent["needs_order_lookup"] = True
             intent["tracking_code"] = tracking_match.group(1)
 
-        # Histórico do cliente
         history_keywords = ["meus pedidos", "meu historico", "ja comprei", "ultima compra", "minhas compras"]
         if any(kw in msg_norm for kw in history_keywords):
             intent["needs_customer_history"] = True
@@ -322,14 +360,24 @@ class Agent:
             products = db.search_products(intent["product_query"])
             if products:
                 sources["tables"].append("products")
-                lines = ["## Produtos Encontrados\n"]
+                lines = [
+                    "## Produtos Encontrados (dados reais do estoque)\n",
+                    "Use EXATAMENTE as quantidades abaixo. Nao invente estoque.\n",
+                ]
                 for p in products:
                     stock_status = "disponivel" if p["stock_quantity"] > 0 else "ESGOTADO"
                     lines.append(
                         f"- **{p['product_name']}** ({p['category_name']}): "
-                        f"R$ {p['price_brl']:.2f} | Estoque: {p['stock_quantity']} ({stock_status})"
+                        f"R$ {p['price_brl']:.2f} | Estoque: {p['stock_quantity']} unidades ({stock_status})"
                     )
                 context_parts.append("\n".join(lines))
+            else:
+                context_parts.append(
+                    "## Produtos Encontrados\n\n"
+                    f"Nenhum produto encontrado para a busca '{intent['product_query']}'. "
+                    "Informe ao cliente que nao localizou esse item e peca o nome/modelo completo. "
+                    "NAO invente estoque nem diga que esta esgotado sem dados."
+                )
 
             promos = db.get_active_promotions()
             query_lower = intent["product_query"].lower()
@@ -400,8 +448,12 @@ class Agent:
                 "\n\n---\n\n"
                 "## DADOS JÁ CONSULTADOS DO SISTEMA\n\n"
                 "As informações abaixo foram recuperadas automaticamente do banco de dados e da "
-                "base de conhecimento. Apresente-as diretamente ao cliente sem dizer que vai verificar — "
-                "a consulta já foi feita.\n\n"
+                "base de conhecimento. Apresente-as DIRETAMENTE ao cliente.\n\n"
+                "REGRAS OBRIGATÓRIAS:\n"
+                "- NÃO diga que vai verificar — a consulta já foi feita.\n"
+                "- Para estoque/preço, use SOMENTE os números deste bloco.\n"
+                "- NUNCA invente quantidade em estoque nem diga 'esgotado' sem constar abaixo.\n"
+                "- Se o bloco disser que nenhum produto foi encontrado, peça o modelo completo.\n\n"
                 + context
             )
 

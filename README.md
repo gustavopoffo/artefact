@@ -595,6 +595,21 @@ artefact/
 │   ├── llm.py                              # Interface com LLM (GPT)
 │   ├── chat.py                             # Orquestração principal do fluxo
 │   └── main.py                             # CLI para testes
+├── api/                                     # API REST (FastAPI)
+│   ├── __init__.py
+│   ├── schemas.py                          # Modelos Pydantic de request/response
+│   └── main.py                             # App FastAPI + endpoints
+├── frontend/                                # Interface React (Vite + Tailwind)
+│   ├── src/
+│   │   ├── components/
+│   │   │   ├── ChatClient.tsx              # Chat estilo WhatsApp (visão cliente)
+│   │   │   ├── AdminConversations.tsx      # Lista/histórico de conversas + rating
+│   │   │   ├── AdminDashboard.tsx          # Dashboard de métricas
+│   │   │   └── AdminSidebar.tsx
+│   │   ├── layouts/AdminLayout.tsx
+│   │   ├── api.ts                          # Cliente HTTP da API
+│   │   └── App.tsx                         # Rotas (/ , /admin , /admin/dashboard)
+│   └── package.json
 ├── data/                                    # CSVs de origem (já importados ao Supabase)
 │   ├── desafio_tecnico_ai_eng - categories.csv
 │   ├── desafio_tecnico_ai_eng - customers.csv
@@ -619,7 +634,7 @@ artefact/
 │   └── mcp.json                            # Config do MCP Supabase (nível do projeto)
 ├── .env                                    # Credenciais locais (não versionado)
 ├── .env.example                            # Modelo de credenciais (Supabase + OpenAI)
-├── requirements.txt                        # Dependências Python (httpx)
+├── requirements.txt                        # Dependências Python (httpx, fastapi, uvicorn)
 └── README.md
 ```
 
@@ -691,9 +706,32 @@ Este script:
 
 > **Os dados de e-commerce** (produtos, clientes, pedidos) já foram importados dos CSVs para o Supabase e estão no banco. Nenhuma ação adicional é necessária.
 
-### 4. Rode o agente
+### 4. Rode a API e o frontend
 
-**Via CLI interativa:**
+**Terminal 1 — API:**
+
+```bash
+uvicorn api.main:app --reload --port 8000
+```
+
+**Terminal 2 — Frontend:**
+
+```bash
+cd frontend
+npm install
+npm run dev
+```
+
+| URL | Visão |
+|-----|--------|
+| http://localhost:5173/ | Chat do cliente (estilo WhatsApp) |
+| http://localhost:5173/admin | Conversas (visão empresa) + avaliação 👍/👎 |
+| http://localhost:5173/admin/dashboard | Dashboard de métricas |
+| http://localhost:8000/docs | Swagger da API |
+
+No chat do cliente, o ícone de engrenagem abre o painel admin.
+
+**Via CLI (opcional):**
 
 ```bash
 python -m agent.main
@@ -736,21 +774,20 @@ A pasta `examples/` contém 5 conversas reais geradas com o agente em funcioname
 
 | Limitação | Impacto | O que faria com mais tempo |
 |-----------|---------|---------------------------|
-| **Interface apenas CLI** | Sem frontend para o usuário final interagir | Criar endpoint FastAPI + widget de chat embeddable |
 | **Identificação de cliente por email/telefone explícito** | O cliente precisa digitar o contato — sem login/auth | Integrar com WhatsApp Business API ou sistema de autenticação |
 | **RAG com apenas 14 chunks fixos** | Novos documentos exigem curadoria manual | Pipeline automático com Docling (OCR) + chunker semântico para escalar |
 | **Busca de produto sem acento nativo** | Contorna com mapeamento em Python; ideal seria extensão `unaccent` no PostgreSQL | Habilitar extensão `unaccent` via migration e usar `ilike` nos dados normalizados |
 | **Sem memória de longo prazo entre sessões** | Agente não "lembra" preferências de sessões anteriores do mesmo cliente | Salvar preferências do cliente em `customers.metadata` e carregar na próxima sessão |
 | **Apenas 1 provedor LLM (OpenAI)** | Dependência de um único fornecedor | Abstrair o LLM para suportar Anthropic/Gemini como fallback |
-| **Modelo de avaliação reativo** | Rating só coletado depois da resposta, por humano | Sistema automático de avaliação usando LLM como juiz (LLM-as-a-judge) |
+| **Modelo de avaliação reativo** | Rating só coletado depois da resposta, por humano no admin | Sistema automático de avaliação usando LLM como juiz (LLM-as-a-judge) |
 
 ### O que faria com mais tempo
 
-1. **API REST (FastAPI)** — expor o agente como um serviço HTTP para integração com WhatsApp, web ou app mobile
-2. **Dashboard de métricas** — frontend para visualizar `v_agent_accuracy_metrics`, `v_rag_performance`, `v_low_rated_responses` em tempo real
-3. **Avaliação automática de respostas** — usar um segundo LLM para avaliar se a resposta foi factualmente correta dado o contexto, gerando rating sem necessitar de humano para cada mensagem
-4. **Curadoria iterativa do prompt** — com avaliação automática rodando, seria possível comparar versões do prompt objetivamente e ajustar com base em dados reais
-5. **Escalabilidade do RAG** — adicionar novos documentos (catálogos de fornecedores, FAQs) via pipeline automatizado com Docling e chunker semântico
+1. **Avaliação automática de respostas** — usar um segundo LLM para avaliar se a resposta foi factualmente correta dado o contexto
+2. **Curadoria iterativa do prompt** — comparar versões do prompt objetivamente com base em ratings reais
+3. **Escalabilidade do RAG** — novos documentos via pipeline automatizado com Docling e chunker semântico
+4. **Auth no painel admin** — proteger `/admin` com login
+5. **Integração WhatsApp Business** — canal real de atendimento
 
 ---
 
@@ -785,6 +822,49 @@ Exemplo concreto: o assistente inicialmente sugeriu usar Docling para OCR do PDF
 - [x] Embeddings gerados e dados populados via `seed_rag.py`
 - [x] Lógica do agente implementada (`agent/`)
 - [x] Exemplos de interação documentados em `examples/`
-- [ ] Endpoint REST (FastAPI)
-- [ ] Frontend de chat
-- [ ] Dashboard de métricas
+- [x] Endpoint REST (FastAPI)
+- [x] Frontend de chat (visão cliente)
+- [x] Painel admin de conversas + avaliação de acurácia
+- [x] Dashboard de métricas
+
+## API REST (FastAPI)
+
+### Subir o servidor
+
+```bash
+pip install -r requirements.txt
+uvicorn api.main:app --reload --port 8000
+```
+
+Docs interativas: http://localhost:8000/docs
+
+### Endpoints
+
+| Método | Rota | Descrição |
+|--------|------|-----------|
+| `GET` | `/health` | Health check |
+| `POST` | `/sessions` | Cria sessão (`{"channel": "web"}`) |
+| `GET` | `/sessions/{id}` | Dados da sessão |
+| `POST` | `/sessions/{id}/end` | Encerra sessão |
+| `POST` | `/sessions/{id}/messages` | Envia mensagem e recebe resposta do agente |
+| `GET` | `/sessions/{id}/messages` | Histórico da conversa |
+| `GET` | `/admin/sessions` | Lista sessões com resumo (contagem, última msg) |
+| `GET` | `/admin/metrics` | Métricas agregadas do dashboard |
+| `PATCH` | `/admin/messages/{id}/rating` | Avalia resposta (`positive` / `negative` / `neutral`) |
+
+### Avaliação de acurácia
+
+No painel **Admin → Conversas**, cada resposta do agente tem botões 👍 / 👎.  
+Isso grava `chat_messages.rating` e alimenta o gráfico de acurácia em **Admin → Dashboard**.
+
+### Exemplo rápido
+
+```bash
+# 1. Criar sessão
+curl -X POST http://localhost:8000/sessions -H "Content-Type: application/json" -d "{\"channel\":\"web\"}"
+
+# 2. Enviar mensagem (substitua SESSION_ID)
+curl -X POST http://localhost:8000/sessions/SESSION_ID/messages \
+  -H "Content-Type: application/json" \
+  -d "{\"message\":\"Vocês têm violão Yamaha?\"}"
+```
